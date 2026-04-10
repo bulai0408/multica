@@ -5,14 +5,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SearchCommand } from "./search-command";
 import { useSearchStore } from "./search-store";
 
-const { mockPush, mockSearchIssues } = vi.hoisted(() => ({
+const { mockPush, mockSearchIssues, mockSearchProjects } = vi.hoisted(() => ({
   mockPush: vi.fn(),
   mockSearchIssues: vi.fn(),
+  mockSearchProjects: vi.fn(),
 }));
 
 vi.mock("@multica/core/api", () => ({
   api: {
     searchIssues: mockSearchIssues,
+    searchProjects: mockSearchProjects,
   },
 }));
 
@@ -33,6 +35,7 @@ describe("SearchCommand", () => {
   beforeEach(() => {
     mockPush.mockReset();
     mockSearchIssues.mockReset().mockResolvedValue({ issues: [] });
+    mockSearchProjects.mockReset().mockResolvedValue({ projects: [] });
 
     // cmdk calls scrollIntoView on the first selected item, which jsdom doesn't implement
     Element.prototype.scrollIntoView = vi.fn();
