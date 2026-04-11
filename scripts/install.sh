@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Multica installer — one command to set up everything.
+# Multica installer — one command to get started.
 #
-# Self-host (default): starts a local Multica server + installs CLI + configures
+# Install CLI (default): connects to multica.ai
 #   curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
 #
-# Cloud only: installs CLI to connect to multica.ai (no Docker needed)
-#   curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --cloud
+# Self-host: starts a local Multica server + installs CLI + configures
+#   curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --local
 #
 set -euo pipefail
 
@@ -155,7 +155,7 @@ Install Docker:
   macOS:  https://docs.docker.com/desktop/install/mac-install/
   Linux:  https://docs.docker.com/engine/install/
 
-After installing Docker, re-run this script."
+After installing Docker, re-run this script with --local."
   fi
 
   if ! docker info >/dev/null 2>&1; then
@@ -166,7 +166,7 @@ After installing Docker, re-run this script."
 }
 
 # ---------------------------------------------------------------------------
-# Server setup (self-host)
+# Server setup (self-host / --local)
 # ---------------------------------------------------------------------------
 setup_server() {
   info "Setting up Multica server..."
@@ -229,7 +229,7 @@ setup_server() {
 }
 
 # ---------------------------------------------------------------------------
-# Configure CLI
+# Configure CLI for local server
 # ---------------------------------------------------------------------------
 configure_local() {
   info "Configuring CLI for local server..."
@@ -242,9 +242,40 @@ configure_local() {
 }
 
 # ---------------------------------------------------------------------------
-# Main: Self-host mode
+# Main: Default mode (cloud — install CLI to connect to multica.ai)
 # ---------------------------------------------------------------------------
-run_selfhost() {
+run_default() {
+  printf "\n"
+  printf "${BOLD}  Multica — Installer${RESET}\n"
+  printf "  Installing the CLI to connect to ${CYAN}multica.ai${RESET}\n"
+  printf "\n"
+
+  detect_os
+  install_cli
+
+  printf "\n"
+  printf "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}\n"
+  printf "${BOLD}${GREEN}  ✓ Multica CLI is installed!${RESET}\n"
+  printf "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}\n"
+  printf "\n"
+  printf "  ${BOLD}Next steps:${RESET}\n"
+  printf "\n"
+  printf "     ${CYAN}multica login${RESET}          # Authenticate with multica.ai\n"
+  printf "     ${CYAN}multica daemon start${RESET}   # Start the agent daemon\n"
+  printf "\n"
+  printf "  Or do it all in one command:\n"
+  printf "\n"
+  printf "     ${CYAN}multica setup${RESET}\n"
+  printf "\n"
+  printf "  ${BOLD}Self-hosting?${RESET} Re-run with --local:\n"
+  printf "     curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --local\n"
+  printf "\n"
+}
+
+# ---------------------------------------------------------------------------
+# Main: Local mode (self-host — full server + CLI)
+# ---------------------------------------------------------------------------
+run_local() {
   printf "\n"
   printf "${BOLD}  Multica — Self-Host Installer${RESET}\n"
   printf "  Setting up a local Multica server + CLI\n"
@@ -280,48 +311,19 @@ run_selfhost() {
 }
 
 # ---------------------------------------------------------------------------
-# Main: Cloud mode
-# ---------------------------------------------------------------------------
-run_cloud() {
-  printf "\n"
-  printf "${BOLD}  Multica — CLI Installer${RESET}\n"
-  printf "  Installing the CLI to connect to multica.ai\n"
-  printf "\n"
-
-  detect_os
-  install_cli
-
-  printf "\n"
-  printf "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}\n"
-  printf "${BOLD}${GREEN}  ✓ Multica CLI is installed!${RESET}\n"
-  printf "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}\n"
-  printf "\n"
-  printf "  ${BOLD}Next steps:${RESET}\n"
-  printf "\n"
-  printf "     ${CYAN}multica login${RESET}          # Authenticate with multica.ai\n"
-  printf "     ${CYAN}multica daemon start${RESET}   # Start the agent daemon\n"
-  printf "\n"
-  printf "  Or do it all in one command:\n"
-  printf "\n"
-  printf "     ${CYAN}multica setup${RESET}\n"
-  printf "\n"
-}
-
-# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 main() {
-  local mode="selfhost"
+  local mode="default"
 
   while [ $# -gt 0 ]; do
     case "$1" in
-      --cloud)    mode="cloud" ;;
-      --selfhost) mode="selfhost" ;;
+      --local)    mode="local" ;;
       --help|-h)
-        echo "Usage: install.sh [--selfhost | --cloud]"
+        echo "Usage: install.sh [--local]"
         echo ""
-        echo "  --selfhost  (default) Set up a local Multica server + CLI"
-        echo "  --cloud     Install CLI only, to connect to multica.ai"
+        echo "  (default)  Install the Multica CLI to connect to multica.ai"
+        echo "  --local    Self-host: set up a local Multica server + CLI"
         exit 0
         ;;
       *) warn "Unknown option: $1" ;;
@@ -330,8 +332,8 @@ main() {
   done
 
   case "$mode" in
-    selfhost) run_selfhost ;;
-    cloud)    run_cloud ;;
+    default) run_default ;;
+    local)   run_local ;;
   esac
 }
 

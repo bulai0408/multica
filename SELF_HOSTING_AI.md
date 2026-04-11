@@ -11,7 +11,7 @@ This document is designed for AI agents to execute. Follow these steps exactly t
 ## One-Command Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --local
 ```
 
 This installs everything: clones the repo, starts Docker services, and installs the CLI.

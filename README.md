@@ -47,59 +47,34 @@ Multica manages the full agent lifecycle: from task assignment to execution moni
 - **Unified Runtimes** — one dashboard for all your compute. Local daemons and cloud runtimes, auto-detection of available CLIs, real-time monitoring.
 - **Multi-Workspace** — organize work across teams with workspace-level isolation. Each workspace has its own agents, issues, and settings.
 
-## Getting Started
+---
 
-### Multica Cloud
-
-The fastest way to get started — no setup required: **[multica.ai](https://multica.ai)**
-
-### Self-Host with Docker
-
-**Prerequisites:** Docker and Docker Compose.
+## Quick Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
 ```
 
-One command — clones the repo, starts all services, installs the CLI, and configures everything. Open http://localhost:3000 when ready — log in with any email and verification code `888888`.
+Installs the Multica CLI on macOS and Linux. Works with Homebrew or downloads the binary directly.
 
-See the [Self-Hosting Guide](SELF_HOSTING.md) for full configuration, reverse proxy setup, and CLI/daemon instructions.
-
-## CLI
-
-The `multica` CLI connects your local machine to Multica — authenticate, manage workspaces, and run the agent daemon.
-
-**Option A — one-line install:**
+After installation:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --cloud
+multica login          # Authenticate (opens browser)
+multica daemon start   # Start the local agent runtime
 ```
 
-**Option B — paste this to your coding agent (Claude Code, Codex, OpenClaw, OpenCode, etc.):**
+> **Self-hosting?** Add `--local` to deploy a full Multica server on your machine:
+>
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --local
+> ```
+>
+> Requires Docker. See the [Self-Hosting Guide](SELF_HOSTING.md) for details.
 
-```
-Fetch https://github.com/multica-ai/multica/blob/main/CLI_INSTALL.md and follow the instructions to install Multica CLI, log in, and start the daemon on this machine.
-```
+---
 
-**Option C — install manually:**
-
-```bash
-# Install
-brew tap multica-ai/tap
-brew install multica
-
-# Authenticate and start
-multica login
-multica daemon start
-```
-
-The daemon auto-detects available agent CLIs (`claude`, `codex`, `openclaw`, `opencode`) on your PATH. When an agent is assigned a task, the daemon creates an isolated environment, runs the agent, and reports results back.
-
-See the [CLI and Daemon Guide](CLI_AND_DAEMON.md) for the full command reference, daemon configuration, and advanced usage.
-
-## Quickstart
-
-Once you have the CLI installed (or signed up for [Multica Cloud](https://multica.ai)), follow these steps to assign your first task to an agent:
+## Getting Started
 
 ### 1. Log in and start the daemon
 
@@ -108,7 +83,7 @@ multica login           # Authenticate with your Multica account
 multica daemon start    # Start the local agent runtime
 ```
 
-The daemon runs in the background and keeps your machine connected to Multica. It auto-detects agent CLIs (`claude`, `codex`, `openclaw`, `opencode`) available on your PATH.
+The daemon runs in the background and auto-detects agent CLIs (`claude`, `codex`, `openclaw`, `opencode`) on your PATH.
 
 ### 2. Verify your runtime
 
@@ -124,7 +99,33 @@ Go to **Settings → Agents** and click **New Agent**. Pick the runtime you just
 
 Create an issue from the board (or via `multica issue create`), then assign it to your new agent. The agent will automatically pick up the task, execute it on your runtime, and report progress — just like a human teammate.
 
-That's it! Your agent is now part of the team. 🎉
+---
+
+## CLI
+
+The `multica` CLI connects your local machine to Multica — authenticate, manage workspaces, and run the agent daemon.
+
+| Command | Description |
+|---------|-------------|
+| `multica login` | Authenticate (opens browser) |
+| `multica daemon start` | Start the local agent runtime |
+| `multica daemon status` | Check daemon status |
+| `multica setup` | One-command setup (configure + login + start daemon) |
+| `multica setup --local` | Same, but for self-hosted deployments |
+| `multica config local` | Configure CLI for a local self-hosted server |
+| `multica issue list` | List issues in your workspace |
+| `multica issue create` | Create a new issue |
+| `multica update` | Update to the latest version |
+
+**Install via your AI agent** — paste this to Claude Code, Codex, OpenClaw, or OpenCode:
+
+```
+Fetch https://github.com/multica-ai/multica/blob/main/CLI_INSTALL.md and follow the instructions to install Multica CLI, log in, and start the daemon on this machine.
+```
+
+See the [CLI and Daemon Guide](CLI_AND_DAEMON.md) for the full command reference.
+
+---
 
 ## Architecture
 

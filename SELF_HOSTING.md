@@ -17,7 +17,7 @@ Each user who runs AI agents locally also installs the **`multica` CLI** and run
 One command to set up everything — server, CLI, and configuration:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --local
 ```
 
 This automatically clones the repository, starts all services via Docker Compose, and installs the `multica` CLI.
