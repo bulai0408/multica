@@ -108,7 +108,7 @@ const mockViewState = {
   includeNoProject: false,
   sortBy: "position" as const,
   sortDirection: "asc" as const,
-  cardProperties: { priority: true, description: true, assignee: true, dueDate: true, project: true, childProgress: true },
+  cardProperties: { priority: true, description: true, assignee: true, dueDate: true, project: true, childProgress: true, labels: true },
   listCollapsedStatuses: [] as string[],
   setViewMode: vi.fn(),
   toggleStatusFilter: vi.fn(),
@@ -130,6 +130,7 @@ const mockViewState = {
 vi.mock("@multica/core/issues/stores/view-store", () => ({
   useClearFiltersOnWorkspaceChange: () => {},
   viewStorePersistOptions: () => ({ name: "test", storage: undefined, partialize: (s: any) => s }),
+  mergeViewStatePersisted: (_p: unknown, c: any) => c,
   viewStoreSlice: vi.fn(),
   useIssueViewStore: Object.assign(
     (selector?: any) => (selector ? selector(mockViewState) : mockViewState),
@@ -153,6 +154,7 @@ vi.mock("@multica/core/issues/stores/view-store", () => ({
     { key: "assignee", label: "Assignee" },
     { key: "dueDate", label: "Due date" },
     { key: "project", label: "Project" },
+    { key: "labels", label: "Labels" },
     { key: "childProgress", label: "Sub-issue progress" },
   ],
 }));
@@ -362,11 +364,10 @@ describe("IssuesPage (shared)", () => {
 
   it("renders issue titles after data loads", async () => {
     mockListIssues.mockImplementation((params: any) =>
-      Promise.resolve(
-        params?.open_only
-          ? { issues: mockIssues, total: mockIssues.length }
-          : { issues: [], total: 0 },
-      ),
+      Promise.resolve({
+        issues: mockIssues.filter((i) => i.status === params?.status),
+        total: mockIssues.filter((i) => i.status === params?.status).length,
+      }),
     );
 
     renderWithQuery(<IssuesPage />);
@@ -378,11 +379,10 @@ describe("IssuesPage (shared)", () => {
 
   it("renders board column headers", async () => {
     mockListIssues.mockImplementation((params: any) =>
-      Promise.resolve(
-        params?.open_only
-          ? { issues: mockIssues, total: mockIssues.length }
-          : { issues: [], total: 0 },
-      ),
+      Promise.resolve({
+        issues: mockIssues.filter((i) => i.status === params?.status),
+        total: mockIssues.filter((i) => i.status === params?.status).length,
+      }),
     );
 
     renderWithQuery(<IssuesPage />);
@@ -394,11 +394,10 @@ describe("IssuesPage (shared)", () => {
 
   it("shows workspace breadcrumb with 'Issues' label", async () => {
     mockListIssues.mockImplementation((params: any) =>
-      Promise.resolve(
-        params?.open_only
-          ? { issues: mockIssues, total: mockIssues.length }
-          : { issues: [], total: 0 },
-      ),
+      Promise.resolve({
+        issues: mockIssues.filter((i) => i.status === params?.status),
+        total: mockIssues.filter((i) => i.status === params?.status).length,
+      }),
     );
 
     renderWithQuery(<IssuesPage />);

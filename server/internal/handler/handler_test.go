@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -54,7 +55,7 @@ func TestMain(m *testing.M) {
 	go hub.Run()
 	bus := events.New()
 	emailSvc := service.NewEmailService()
-	testHandler = New(queries, pool, hub, bus, emailSvc, nil, nil)
+	testHandler = New(queries, pool, hub, bus, emailSvc, nil, nil, analytics.NoopClient{}, Config{AllowSignup: true})
 	testPool = pool
 
 	testUserID, testWorkspaceID, err = setupHandlerTestFixture(ctx, pool)
@@ -156,6 +157,81 @@ func withURLParam(req *http.Request, key, value string) *http.Request {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add(key, value)
 	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+}
+
+func handlerTestRuntimeID(t *testing.T) string {
+	t.Helper()
+
+	var runtimeID string
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT id FROM agent_runtime WHERE workspace_id = $1 ORDER BY created_at ASC LIMIT 1`,
+		testWorkspaceID,
+	).Scan(&runtimeID); err != nil {
+		t.Fatalf("failed to load handler test runtime: %v", err)
+	}
+
+	return runtimeID
+}
+
+func createHandlerTestAgent(t *testing.T, name string, mcpConfig []byte) string {
+	t.Helper()
+
+	var agentID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent (
+			workspace_id, name, description, runtime_mode, runtime_config,
+			runtime_id, visibility, max_concurrent_tasks, owner_id,
+			instructions, custom_env, custom_args, mcp_config
+		)
+		VALUES ($1, $2, '', 'cloud', '{}'::jsonb, $3, 'private', 1, $4, '', '{}'::jsonb, '[]'::jsonb, $5)
+		RETURNING id
+	`, testWorkspaceID, name, handlerTestRuntimeID(t), testUserID, mcpConfig).Scan(&agentID); err != nil {
+		t.Fatalf("failed to create handler test agent: %v", err)
+	}
+
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
+	})
+
+	return agentID
+}
+
+func fetchAgentMcpConfig(t *testing.T, agentID string) []byte {
+	t.Helper()
+
+	var mcpConfig []byte
+	if err := testPool.QueryRow(context.Background(), `SELECT mcp_config FROM agent WHERE id = $1`, agentID).Scan(&mcpConfig); err != nil {
+		t.Fatalf("failed to load agent mcp_config: %v", err)
+	}
+
+	return mcpConfig
+}
+
+func assertJSONEqual(t *testing.T, got []byte, want string) {
+	t.Helper()
+
+	var gotValue any
+	if err := json.Unmarshal(got, &gotValue); err != nil {
+		t.Fatalf("failed to unmarshal got JSON %q: %v", string(got), err)
+	}
+
+	var wantValue any
+	if err := json.Unmarshal([]byte(want), &wantValue); err != nil {
+		t.Fatalf("failed to unmarshal want JSON %q: %v", want, err)
+	}
+
+	gotJSON, err := json.Marshal(gotValue)
+	if err != nil {
+		t.Fatalf("failed to marshal normalized got JSON: %v", err)
+	}
+	wantJSON, err := json.Marshal(wantValue)
+	if err != nil {
+		t.Fatalf("failed to marshal normalized want JSON: %v", err)
+	}
+
+	if string(gotJSON) != string(wantJSON) {
+		t.Fatalf("expected JSON %s, got %s", string(wantJSON), string(gotJSON))
+	}
 }
 
 func TestIssueCRUD(t *testing.T) {
@@ -454,6 +530,218 @@ func TestCreateSubIssueUsesExplicitProjectOverParentProject(t *testing.T) {
 	}
 }
 
+// TestCreateIssueRejectsNonexistentMemberAssignee covers the bug where any
+// well-formed UUID was accepted as assignee_id without checking workspace
+// membership.
+func TestCreateIssueRejectsNonexistentMemberAssignee(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":         "Ghost member assignee",
+		"assignee_type": "member",
+		"assignee_id":   "00000000-0000-0000-0000-000000000000",
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("CreateIssue: expected 400 for nonexistent member, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestCreateIssueRejectsNonexistentAgentAssignee verifies the same check on
+// the agent branch — previously rejected with 403 "agent not found"; we want a
+// consistent 400 from the new validator.
+func TestCreateIssueRejectsNonexistentAgentAssignee(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":         "Ghost agent assignee",
+		"assignee_type": "agent",
+		"assignee_id":   "00000000-0000-0000-0000-000000000000",
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("CreateIssue: expected 400 for nonexistent agent, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestCreateIssueRejectsAssigneeTypeWithoutID rejects requests where only one
+// of the two fields was supplied — historically this would create an issue
+// with an inconsistent state.
+func TestCreateIssueRejectsAssigneeTypeWithoutID(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":         "Lone assignee_type",
+		"assignee_type": "member",
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("CreateIssue: expected 400 when only assignee_type is set, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestCreateIssueRejectsAssigneeIDWithoutType is the symmetric case.
+func TestCreateIssueRejectsAssigneeIDWithoutType(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":       "Lone assignee_id",
+		"assignee_id": testUserID,
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("CreateIssue: expected 400 when only assignee_id is set, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestCreateIssueRejectsUnknownAssigneeType guards against typos like
+// "members" or "user" that previously sneaked through.
+func TestCreateIssueRejectsUnknownAssigneeType(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":         "Bogus assignee_type",
+		"assignee_type": "user",
+		"assignee_id":   testUserID,
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("CreateIssue: expected 400 for unknown assignee_type, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestCreateIssueAcceptsValidMemberAssignee is the positive control — the
+// validator must not block legitimate workspace members.
+func TestCreateIssueAcceptsValidMemberAssignee(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":         "Valid member assignee",
+		"assignee_type": "member",
+		"assignee_id":   testUserID,
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: expected 201 for valid member assignee, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var created IssueResponse
+	json.NewDecoder(w.Body).Decode(&created)
+	cleanupReq := newRequest("DELETE", "/api/issues/"+created.ID, nil)
+	cleanupReq = withURLParam(cleanupReq, "id", created.ID)
+	testHandler.DeleteIssue(httptest.NewRecorder(), cleanupReq)
+}
+
+// TestCreateIssueRejectsMalformedAssigneeID covers the case where parseUUID
+// silently produces an invalid pgtype.UUID and the validator would otherwise
+// treat (no type + unparseable id) as "no assignee" and accept the request.
+func TestCreateIssueRejectsMalformedAssigneeID(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":       "Malformed assignee_id only",
+		"assignee_id": "not-a-uuid",
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("CreateIssue: expected 400 for malformed assignee_id, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestUpdateIssueRejectsMalformedAssigneeID is the equivalent for the update
+// path, where the same parseUUID-shaped gap existed on a previously-unassigned
+// issue.
+func TestUpdateIssueRejectsMalformedAssigneeID(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "Update malformed assignee target",
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created IssueResponse
+	json.NewDecoder(w.Body).Decode(&created)
+	defer func() {
+		cleanupReq := newRequest("DELETE", "/api/issues/"+created.ID, nil)
+		cleanupReq = withURLParam(cleanupReq, "id", created.ID)
+		testHandler.DeleteIssue(httptest.NewRecorder(), cleanupReq)
+	}()
+
+	w = httptest.NewRecorder()
+	req = newRequest("PUT", "/api/issues/"+created.ID, map[string]any{
+		"assignee_id": "not-a-uuid",
+	})
+	req = withURLParam(req, "id", created.ID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("UpdateIssue: expected 400 for malformed assignee_id, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestUpdateIssueRejectsNonexistentMemberAssignee verifies the same gap is
+// closed on the update path — UpdateIssue previously only validated agents.
+func TestUpdateIssueRejectsNonexistentMemberAssignee(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "Update assignee target",
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created IssueResponse
+	json.NewDecoder(w.Body).Decode(&created)
+	defer func() {
+		cleanupReq := newRequest("DELETE", "/api/issues/"+created.ID, nil)
+		cleanupReq = withURLParam(cleanupReq, "id", created.ID)
+		testHandler.DeleteIssue(httptest.NewRecorder(), cleanupReq)
+	}()
+
+	w = httptest.NewRecorder()
+	req = newRequest("PUT", "/api/issues/"+created.ID, map[string]any{
+		"assignee_type": "member",
+		"assignee_id":   "00000000-0000-0000-0000-000000000000",
+	})
+	req = withURLParam(req, "id", created.ID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("UpdateIssue: expected 400 for nonexistent member, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestUpdateIssueAllowsExplicitUnassign verifies that sending null for both
+// fields still works after the new validator landed — clearing the assignee
+// must not be misclassified as a mismatched pair.
+func TestUpdateIssueAllowsExplicitUnassign(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":         "Issue to unassign",
+		"assignee_type": "member",
+		"assignee_id":   testUserID,
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created IssueResponse
+	json.NewDecoder(w.Body).Decode(&created)
+	defer func() {
+		cleanupReq := newRequest("DELETE", "/api/issues/"+created.ID, nil)
+		cleanupReq = withURLParam(cleanupReq, "id", created.ID)
+		testHandler.DeleteIssue(httptest.NewRecorder(), cleanupReq)
+	}()
+
+	w = httptest.NewRecorder()
+	req = newRequest("PUT", "/api/issues/"+created.ID, map[string]any{
+		"assignee_type": nil,
+		"assignee_id":   nil,
+	})
+	req = withURLParam(req, "id", created.ID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdateIssue: expected 200 for unassign, got %d: %s", w.Code, w.Body.String())
+	}
+	var updated IssueResponse
+	json.NewDecoder(w.Body).Decode(&updated)
+	if updated.AssigneeType != nil || updated.AssigneeID != nil {
+		t.Fatalf("UpdateIssue: expected assignee cleared, got type=%v id=%v", updated.AssigneeType, updated.AssigneeID)
+	}
+}
+
 func TestCommentCRUD(t *testing.T) {
 	// Create an issue first
 	w := httptest.NewRecorder()
@@ -535,6 +823,99 @@ func TestAgentCRUD(t *testing.T) {
 	}
 	if updated.Name != agents[0].Name {
 		t.Fatalf("UpdateAgent: name should be preserved, got '%s'", updated.Name)
+	}
+}
+
+func TestUpdateAgentMcpConfigAbsentPreservesValue(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "Handler Mcp Preserve", []byte(`{"preset":"keep"}`))
+
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/agents/"+agentID, map[string]any{
+		"name": "Handler Mcp Preserve Updated",
+	})
+	req = withURLParam(req, "id", agentID)
+	testHandler.UpdateAgent(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdateAgent: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var updated AgentResponse
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("UpdateAgent: decode response: %v", err)
+	}
+	assertJSONEqual(t, updated.McpConfig, `{"preset":"keep"}`)
+	assertJSONEqual(t, fetchAgentMcpConfig(t, agentID), `{"preset":"keep"}`)
+}
+
+func TestUpdateAgentMcpConfigNullClearsValue(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "Handler Mcp Clear", []byte(`{"preset":"clear"}`))
+
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/agents/"+agentID, map[string]any{
+		"mcp_config": nil,
+	})
+	req = withURLParam(req, "id", agentID)
+	testHandler.UpdateAgent(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdateAgent: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var updated AgentResponse
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("UpdateAgent: decode response: %v", err)
+	}
+	assertJSONEqual(t, updated.McpConfig, `null`)
+	if fetchAgentMcpConfig(t, agentID) != nil {
+		t.Fatalf("UpdateAgent: expected DB mcp_config to be SQL NULL")
+	}
+}
+
+func TestUpdateAgentMcpConfigObjectUpdatesValue(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "Handler Mcp Update", []byte(`{"preset":"old"}`))
+
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/agents/"+agentID, map[string]any{
+		"mcp_config": map[string]any{"preset": "new"},
+	})
+	req = withURLParam(req, "id", agentID)
+	testHandler.UpdateAgent(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdateAgent: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var updated AgentResponse
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("UpdateAgent: decode response: %v", err)
+	}
+	assertJSONEqual(t, updated.McpConfig, `{"preset":"new"}`)
+	assertJSONEqual(t, fetchAgentMcpConfig(t, agentID), `{"preset":"new"}`)
+}
+
+func TestCreateAgentMcpConfigNullStoresSQLNull(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/agents", map[string]any{
+		"name":        "Handler Mcp Create Null",
+		"runtime_id":  handlerTestRuntimeID(t),
+		"mcp_config":  nil,
+		"custom_env":  map[string]string{},
+		"custom_args": []string{},
+	})
+	testHandler.CreateAgent(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateAgent: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var created AgentResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("CreateAgent: decode response: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, created.ID)
+	})
+
+	assertJSONEqual(t, created.McpConfig, `null`)
+	if fetchAgentMcpConfig(t, created.ID) != nil {
+		t.Fatalf("CreateAgent: expected DB mcp_config to be SQL NULL")
 	}
 }
 
@@ -651,6 +1032,39 @@ func TestSendCode(t *testing.T) {
 	t.Cleanup(func() {
 		testPool.Exec(context.Background(), `DELETE FROM verification_code WHERE email = $1`, "sendcode-test@multica.ai")
 	})
+}
+
+func TestSendCodeDbError(t *testing.T) {
+	// We can't easily mock the DB here without changing architecture,
+	// but we can simulate a DB error by closing the pool temporarily or
+	// using a cancelled context if the query respects it.
+	
+	// Create a handler with a "broken" queries object is hard because it's a struct.
+	// Instead, let's use a context that is already cancelled.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	w := httptest.NewRecorder()
+	body := map[string]string{"email": "dberror-test@multica.ai"}
+	var buf bytes.Buffer
+	json.NewEncoder(&buf).Encode(body)
+	req := httptest.NewRequest("POST", "/auth/send-code", &buf)
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(ctx)
+
+	testHandler.SendCode(w, req)
+	
+	// If the DB query respects the cancelled context, it should return an error.
+	// pgx usually returns context.Canceled which is not what isNotFound checks for.
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("SendCode (db error): expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+	
+	var resp map[string]string
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["error"] != "failed to lookup user" {
+		t.Fatalf("SendCode (db error): expected error message 'failed to lookup user', got '%s'", resp["error"])
+	}
 }
 
 func TestSendCodeRateLimit(t *testing.T) {

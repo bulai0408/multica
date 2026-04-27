@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -36,8 +37,31 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 
 	args := buildClaudeArgs(opts, b.cfg.Logger)
 
+	// If the caller provided an MCP config, write it to a temp file and pass
+	// --mcp-config <path> so the agent uses a controlled set of MCP servers
+	// instead of inheriting from the outer Claude Code session.
+	var mcpConfigPath string
+	var mcpFileCleanup func() // non-nil while this function owns the temp file
+	if len(opts.McpConfig) > 0 {
+		path, err := writeMcpConfigToTemp(opts.McpConfig)
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+		mcpConfigPath = path
+		mcpFileCleanup = func() { os.Remove(mcpConfigPath) }
+		args = append(args, "--mcp-config", mcpConfigPath)
+	}
+	// Clean up the temp file if we return before the goroutine takes ownership.
+	defer func() {
+		if mcpFileCleanup != nil {
+			mcpFileCleanup()
+		}
+	}()
+
 	cmd := exec.CommandContext(runCtx, execPath, args...)
-	b.cfg.Logger.Debug("agent command", "exec", execPath, "args", args)
+	hideAgentWindow(cmd)
+	b.cfg.Logger.Info("agent command", "exec", execPath, "args", args)
 	cmd.WaitDelay = 10 * time.Second
 	if opts.Cwd != "" {
 		cmd.Dir = opts.Cwd
@@ -60,7 +84,13 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 			stdin = nil
 		}
 	}
-	cmd.Stderr = newLogWriter(b.cfg.Logger, "[claude:stderr] ")
+	// Capture stderr into both the daemon log (as before) and a bounded tail
+	// buffer so we can include the last few KB in Result.Error when claude
+	// exits unexpectedly. Without the tail, an exit-code-only failure looks
+	// like "claude exited with error: exit status 3" — which is useless for
+	// root-causing V8 aborts, Bun panics, or any other CLI-side crash.
+	stderrBuf := newStderrTail(newLogWriter(b.cfg.Logger, "[claude:stderr] "), agentStderrTailBytes)
+	cmd.Stderr = stderrBuf
 
 	if err := cmd.Start(); err != nil {
 		closeStdin()
@@ -68,14 +98,23 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		return nil, fmt.Errorf("start claude: %w", err)
 	}
 	if err := writeClaudeInput(stdin, prompt); err != nil {
+		// claude almost certainly died during startup (broken pipe). The
+		// real reason is sitting in stderrBuf — surface it the same way the
+		// post-handshake error path does, otherwise the daemon log is the
+		// only place that knows whether it was a V8 abort, a missing native
+		// module, or anything else. cmd.Wait() flushes os/exec's stderr
+		// copy goroutine, so stderrBuf.Tail() is safe to read.
 		closeStdin()
 		cancel()
 		_ = cmd.Wait()
-		return nil, fmt.Errorf("write claude input: %w", err)
+		return nil, errors.New(withAgentStderr(fmt.Sprintf("write claude input: %v", err), "claude", stderrBuf.Tail()))
 	}
 	closeStdin()
 
 	b.cfg.Logger.Info("claude started", "pid", cmd.Process.Pid, "cwd", opts.Cwd, "model", opts.Model)
+
+	// cmd.Start() succeeded — transfer temp file ownership to the goroutine.
+	mcpFileCleanup = nil
 
 	msgCh := make(chan Message, 256)
 	resCh := make(chan Result, 1)
@@ -84,6 +123,9 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		defer cancel()
 		defer close(msgCh)
 		defer close(resCh)
+		if mcpConfigPath != "" {
+			defer os.Remove(mcpConfigPath)
+		}
 
 		startTime := time.Now()
 		var output strings.Builder
@@ -121,7 +163,7 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 				if msg.SessionID != "" {
 					sessionID = msg.SessionID
 				}
-				trySend(msgCh, Message{Type: MessageStatus, Status: "running"})
+				trySend(msgCh, Message{Type: MessageStatus, Status: "running", SessionID: sessionID})
 			case "result":
 				closeStdin()
 				sessionID = msg.SessionID
@@ -159,14 +201,31 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 			finalError = fmt.Sprintf("claude exited with error: %v", exitErr)
 		}
 
+		// cmd.Wait() has returned — os/exec's stderr copy goroutine has
+		// observed every byte claude wrote to stderr before exiting, so
+		// stderrBuf.Tail() is safe to sample now. Attach the tail to any
+		// non-empty failure message; callers upstream surface this as the
+		// task's error field, which is the only place users see it.
+		if finalError != "" {
+			finalError = withAgentStderr(finalError, "claude", stderrBuf.Tail())
+		}
+
 		b.cfg.Logger.Info("claude finished", "pid", cmd.Process.Pid, "status", finalStatus, "duration", duration.Round(time.Millisecond).String())
+
+		reportedSessionID := resolveSessionID(opts.ResumeSessionID, sessionID, finalStatus == "failed")
+		if reportedSessionID != sessionID {
+			b.cfg.Logger.Info("claude resume did not land; clearing fresh session id for daemon fallback",
+				"requested_resume", opts.ResumeSessionID,
+				"emitted_session", sessionID,
+			)
+		}
 
 		resCh <- Result{
 			Status:     finalStatus,
 			Output:     output.String(),
 			Error:      finalError,
 			DurationMs: duration.Milliseconds(),
-			SessionID:  sessionID,
+			SessionID:  reportedSessionID,
 			Usage:      usage,
 		}
 	}()
@@ -347,10 +406,11 @@ func trySend(ch chan<- Message, msg Message) {
 // overridden by user-configured custom_args. Overriding these would break
 // the daemon↔Claude communication protocol.
 var claudeBlockedArgs = map[string]blockedArgMode{
-	"-p":               blockedStandalone, // non-interactive mode
-	"--output-format":  blockedWithValue,  // stream-json protocol
-	"--input-format":   blockedWithValue,  // stream-json protocol
+	"-p":                blockedStandalone, // non-interactive mode
+	"--output-format":   blockedWithValue,  // stream-json protocol
+	"--input-format":    blockedWithValue,  // stream-json protocol
 	"--permission-mode": blockedWithValue,  // bypassPermissions for autonomous operation
+	"--mcp-config":      blockedWithValue,  // set by daemon from agent.mcp_config
 }
 
 func buildClaudeArgs(opts ExecOptions, logger *slog.Logger) []string {
@@ -409,6 +469,20 @@ func buildClaudeInput(prompt string) ([]byte, error) {
 	return append(data, '\n'), nil
 }
 
+// resolveSessionID decides which session id to report on the Result. When the
+// caller requested --resume but claude emitted a fresh, different session id
+// AND the run failed, the resume did not land (claude prints
+// "No conversation found with session ID: ..." to stderr, generates a fresh
+// session, and exits). Returning "" in that case keeps the daemon's
+// retry-with-fresh-session fallback able to trigger, instead of silently
+// persisting a brand-new id as if resume had succeeded.
+func resolveSessionID(requestedResume, emitted string, failed bool) string {
+	if failed && requestedResume != "" && emitted != "" && emitted != requestedResume {
+		return ""
+	}
+	return emitted
+}
+
 func buildEnv(extra map[string]string) []string {
 	return mergeEnv(os.Environ(), extra)
 }
@@ -438,7 +512,7 @@ func isFilteredChildEnvKey(key string) bool {
 type blockedArgMode int
 
 const (
-	blockedWithValue blockedArgMode = iota // flag takes a value (next arg or =value)
+	blockedWithValue  blockedArgMode = iota // flag takes a value (next arg or =value)
 	blockedStandalone                       // flag is boolean, no value
 )
 
@@ -480,8 +554,28 @@ func filterCustomArgs(args []string, blocked map[string]blockedArgMode, logger *
 	return filtered
 }
 
+// writeMcpConfigToTemp writes raw MCP config JSON to a temporary file and returns
+// its path. The caller is responsible for removing the file when done.
+func writeMcpConfigToTemp(raw json.RawMessage) (string, error) {
+	f, err := os.CreateTemp("", "multica-mcp-*.json")
+	if err != nil {
+		return "", fmt.Errorf("create mcp config temp file: %w", err)
+	}
+	if _, err := f.Write(raw); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return "", fmt.Errorf("write mcp config temp file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(f.Name())
+		return "", fmt.Errorf("close mcp config temp file: %w", err)
+	}
+	return f.Name(), nil
+}
+
 func detectCLIVersion(ctx context.Context, execPath string) (string, error) {
 	cmd := exec.CommandContext(ctx, execPath, "--version")
+	hideAgentWindow(cmd)
 	data, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("detect version for %s: %w", execPath, err)
