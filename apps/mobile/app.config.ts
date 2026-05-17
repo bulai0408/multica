@@ -33,7 +33,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     ios: {
       supportsTablet: false,
       bundleIdentifier: isProd
-        ? "ai.multica.mobile"
+        ? "multica.kami.fit"
         : isStaging
           ? "ai.multica.mobile.staging"
           : "ai.multica.mobile.dev",

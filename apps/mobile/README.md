@@ -8,13 +8,18 @@ Expo + React Native iOS client for Multica. Independent from web/desktop — sha
 |---|---|---|
 | `pnpm dev:mobile` | Metro only (reuse existing dev install) | local (`.env.development.local`) |
 | `pnpm dev:mobile:staging` | Metro only (reuse existing dev install) | staging (`.env.staging`) |
+| `pnpm dev:mobile:kami` | Metro only (reuse existing Kami install) | Kami prod (`.env.kami`) |
 | `pnpm ios:mobile:device` | Full rebuild + install on USB iPhone, **Debug** | local |
 | `pnpm ios:mobile:device:staging` | Full rebuild + install on USB iPhone, **Debug** | staging |
 | `pnpm ios:mobile:device:staging:release` | Full rebuild + install, **Release** (standalone) | staging |
+| `pnpm ios:mobile:device:kami` | Full rebuild + install on USB iPhone, **Debug** | Kami prod |
+| `pnpm ios:mobile:device:kami:release` | Full rebuild + install, **Release** (standalone) | Kami prod |
 
 `dev:*` runs Metro only — assumes a Debug build of the matching variant is already installed on the device. `ios:device:*` does a full native rebuild + install onto a USB-connected iPhone.
 
 Bundle identifier and display name switch on `APP_ENV` (see `app.config.ts`), so Dev / Staging / Production variants can coexist on the same device.
+
+The Kami scripts use production identity (`APP_ENV=production`) with bundle id `multica.kami.fit`, API `https://multica-api.kami.fit:444`, and web URL `https://multica.kami.fit:444`.
 
 ## Build your own version onto your iPhone
 
