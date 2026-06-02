@@ -1,12 +1,18 @@
 # Self-hosting Docker Compose — starts PostgreSQL, backend, and frontend.
 #
-# Services bind to 127.0.0.1 only. For cross-machine or public access, front
-# them with a reverse proxy (Caddy / nginx / Cloudflare Tunnel) that terminates
-# TLS and forwards to 127.0.0.1:8080 (backend) and 127.0.0.1:3000 (frontend).
-# Do NOT change these bindings to 0.0.0.0 — Docker bypasses host firewalls
-# (UFW/iptables) by default, so the raw ports would be exposed to the internet
-# with the default JWT_SECRET and Postgres credentials. See:
-#   apps/docs/content/docs/self-host-quickstart.mdx
+# Host port bindings default to 127.0.0.1 (loopback only). For cross-machine or
+# public access, the recommended path is a reverse proxy (Caddy / nginx /
+# Cloudflare Tunnel) that terminates TLS and forwards to 127.0.0.1:8080
+# (backend) and 127.0.0.1:3000 (frontend).
+#
+# To expose the raw ports on a TRUSTED LAN (e.g. reach the frontend at
+# http://<host-ip>:3000), set BIND_ADDR in .env:
+#   BIND_ADDR=0.0.0.0          # all interfaces
+#   BIND_ADDR=192.168.31.222   # a specific interface
+# WARNING: Docker bypasses host firewalls (UFW/iptables) by default, so a
+# non-loopback BIND_ADDR exposes these ports directly. Only do this on a
+# trusted network AND after changing JWT_SECRET and the Postgres credentials.
+# See: apps/docs/content/docs/self-host-quickstart.mdx
 #
 # Usage:
 #   cp .env.example .env
@@ -44,7 +50,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "127.0.0.1:${BACKEND_PORT:-${API_PORT:-${SERVER_PORT:-${PORT:-8080}}}}:8080"
+      - "${BIND_ADDR:-127.0.0.1}:${BACKEND_PORT:-${API_PORT:-${SERVER_PORT:-${PORT:-8080}}}}:8080"
     volumes:
       - backend_uploads:/app/data/uploads
     environment:
@@ -134,7 +140,7 @@ services:
     depends_on:
       - backend
     ports:
-      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+      - "${BIND_ADDR:-127.0.0.1}:${FRONTEND_PORT:-3000}:3000"
     environment:
       HOSTNAME: "0.0.0.0"
       REMOTE_API_URL: ${REMOTE_API_URL:-http://backend:8080}
