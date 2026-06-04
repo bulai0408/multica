@@ -149,6 +149,34 @@ services:
       NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-}
     restart: unless-stopped
 
+  # Usage-dashboard rollup scheduler (replaces pg_cron). The dashboards read
+  # from task_usage_hourly, which is only populated when rollup_task_usage_hourly()
+  # runs. The bundled postgres image has no pg_cron, so this sidecar calls the
+  # function on an interval instead. The function is idempotent and
+  # watermark-driven, so a missed/failed tick simply catches up on the next run.
+  # Reuses the already-pulled postgres image purely for its psql client.
+  # See SELF_HOSTING.md → "Usage Dashboard Rollup".
+  rollup-cron:
+    image: pgvector/pgvector:pg17
+    depends_on:
+      postgres:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-multica}:${POSTGRES_PASSWORD:-multica}@postgres:5432/${POSTGRES_DB:-multica}?sslmode=disable
+      ROLLUP_INTERVAL_SECONDS: ${ROLLUP_INTERVAL_SECONDS:-300}
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        echo "rollup-cron: scheduling rollup_task_usage_hourly() every $${ROLLUP_INTERVAL_SECONDS}s"
+        while true; do
+          psql "$$DATABASE_URL" -v ON_ERROR_STOP=0 -c 'SELECT rollup_task_usage_hourly();' >/dev/null 2>&1 \
+            || echo "rollup-cron: tick failed (db/migrations not ready?), will retry"
+          sleep "$$ROLLUP_INTERVAL_SECONDS"
+        done
+    restart: unless-stopped
+
 volumes:
   pgdata:
   backend_uploads:
