@@ -1,0 +1,156 @@
+name: Self-host macOS DMG
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: "Upstream ref to build when sync_upstream is enabled; use latest for the newest release tag"
+        required: false
+        default: "latest"
+      sync_upstream:
+        description: "Build from multica-ai/multica instead of the fork checkout"
+        required: false
+        type: choice
+        options:
+          - "true"
+          - "false"
+        default: "true"
+  schedule:
+    # Keep fork/self-host DMG artifacts fresh without relying on upstream's
+    # manual macOS release process.
+    - cron: "17 3 * * *"
+  push:
+    branches:
+      - main
+    tags:
+      - "v*.*.*"
+      - "!v*-dirty*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: selfhost-macos-dmg-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos-dmg:
+    name: Build macOS DMG
+    # This workflow is for forks/self-host installs. The canonical upstream
+    # still ships signed + notarized macOS builds through the manual Desktop
+    # release path until Apple credentials are wired into CI.
+    if: github.repository_owner != 'multica-ai'
+    runs-on: macos-latest
+    env:
+      UPSTREAM_REF: ${{ github.event.inputs.upstream_ref || vars.MULTICA_UPSTREAM_REF || 'latest' }}
+      SYNC_UPSTREAM: ${{ github.event.inputs.sync_upstream || vars.SELFHOST_SYNC_UPSTREAM || 'true' }}
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Select source ref
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" != "push" && "${SYNC_UPSTREAM}" == "true" ]]; then
+            git remote add upstream https://github.com/multica-ai/multica.git 2>/dev/null || \
+              git remote set-url upstream https://github.com/multica-ai/multica.git
+            if [[ "${UPSTREAM_REF}" == "latest" ]]; then
+              git fetch --tags upstream
+              latest_tag="$(
+                git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname |
+                  grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' |
+                  head -n 1
+              )"
+              if [[ -z "${latest_tag}" ]]; then
+                echo "::error::No upstream release tags found"
+                exit 1
+              fi
+              git checkout --detach "${latest_tag}"
+            else
+              git fetch --tags upstream "${UPSTREAM_REF}"
+              git checkout --detach FETCH_HEAD
+            fi
+          fi
+
+          version="$(git describe --tags --always --dirty)"
+          short_sha="$(git rev-parse --short=12 HEAD)"
+          source_sha="$(git rev-parse HEAD)"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${short_sha}" >> "$GITHUB_OUTPUT"
+          echo "source_sha=${source_sha}" >> "$GITHUB_OUTPUT"
+          echo "Building ${version} (${source_sha})"
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Package macOS DMGs
+        working-directory: apps/desktop
+        env:
+          # Repository variables are enough for plain URLs; secrets are
+          # supported for private hostnames or deployment-specific values.
+          VITE_API_URL: ${{ vars.SELFHOST_DESKTOP_API_URL || secrets.SELFHOST_DESKTOP_API_URL || vars.VITE_API_URL || secrets.VITE_API_URL || '' }}
+          VITE_WS_URL: ${{ vars.SELFHOST_DESKTOP_WS_URL || secrets.SELFHOST_DESKTOP_WS_URL || vars.VITE_WS_URL || secrets.VITE_WS_URL || '' }}
+          VITE_APP_URL: ${{ vars.SELFHOST_DESKTOP_APP_URL || secrets.SELFHOST_DESKTOP_APP_URL || vars.VITE_APP_URL || secrets.VITE_APP_URL || '' }}
+          # Default to unsigned fork builds. If CSC_LINK / Apple credentials
+          # are configured, electron-builder can still sign/notarize.
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ vars.CSC_IDENTITY_AUTO_DISCOVERY || 'false' }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: node scripts/package.mjs --mac dmg --x64 --arm64 --publish never
+
+      - name: Upload DMG artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: selfhost-macos-dmg-${{ steps.source.outputs.version }}-${{ steps.source.outputs.short_sha }}
+          path: apps/desktop/dist/**/*.dmg
+          if-no-files-found: error
+
+      - name: Upload DMGs to tag release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=()
+          while IFS= read -r -d '' file; do
+            files+=("$file")
+          done < <(find apps/desktop/dist -type f -name '*.dmg' -print0)
+
+          if [[ "${#files[@]}" -eq 0 ]]; then
+            echo "::error::No DMG artifacts found"
+            exit 1
+          fi
+
+          if ! gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release create "${RELEASE_TAG}" \
+              --target "${{ steps.source.outputs.source_sha }}" \
+              --title "${RELEASE_TAG}" \
+              --notes "Self-host macOS Desktop DMG for ${RELEASE_TAG}."
+          fi
+
+          gh release upload "${RELEASE_TAG}" "${files[@]}" --clobber
