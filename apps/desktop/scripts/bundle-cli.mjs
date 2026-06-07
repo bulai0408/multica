@@ -22,6 +22,7 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..", "..");
 const serverDir = join(repoRoot, "server");
+const RELEASE_TAG_PATTERN = "v[0-9]*.[0-9]*.[0-9]*";
 
 const PLATFORM_TO_GOOS = {
   darwin: "darwin",
@@ -82,6 +83,14 @@ function sh(cmd) {
   }
 }
 
+function git(args) {
+  try {
+    return execFileSync("git", args, { encoding: "utf-8" }).trim();
+  } catch {
+    return "";
+  }
+}
+
 function hasGo() {
   try {
     execSync("go version", { stdio: "pipe" });
@@ -101,7 +110,8 @@ async function exists(p) {
 }
 
 if (hasGo()) {
-  const version = sh("git describe --tags --always --dirty") || "dev";
+  const version =
+    git(["describe", "--tags", "--match", RELEASE_TAG_PATTERN, "--always", "--dirty"]) || "dev";
   const commit = sh("git rev-parse --short HEAD") || "unknown";
   const date = new Date().toISOString().replace(/\.\d+Z$/, "Z");
   const ldflags = `-X main.version=${version} -X main.commit=${commit} -X main.date=${date}`;

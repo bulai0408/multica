@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Wrapper around `electron-builder` that keeps the Desktop version in
-// lockstep with the CLI. Both are derived from `git describe --tags
-// --always --dirty` — the same source GoReleaser reads for the CLI
+// lockstep with the CLI. Both are derived from the nearest `vX.Y.Z` tag
+// via `git describe` — the same source GoReleaser reads for the CLI
 // binary via the `main.version` ldflag — so a single `vX.Y.Z` tag push
 // produces matching CLI and Desktop versions.
 //
@@ -70,9 +70,19 @@ const MAC_ALL_PLATFORM_TARGETS = [
   { platform: "linux", arch: "arm64" },
 ];
 
+const RELEASE_TAG_PATTERN = "v[0-9]*.[0-9]*.[0-9]*";
+
 function sh(cmd) {
   try {
     return execSync(cmd, { encoding: "utf-8" }).trim();
+  } catch {
+    return "";
+  }
+}
+
+function git(args, options = {}) {
+  try {
+    return execFileSync("git", args, { encoding: "utf-8", ...options }).trim();
   } catch {
     return "";
   }
@@ -91,8 +101,8 @@ export function stripLeadingSeparator(argv) {
 }
 
 /**
- * Pure transformation from the `git describe --tags --always --dirty`
- * output to the value we feed into electron-builder's extraMetadata.version.
+ * Pure transformation from the semver-tag `git describe` output to the value
+ * we feed into electron-builder's extraMetadata.version.
  *
  *   - empty input              → null   (caller should fall back)
  *   - "v0.1.36"                → "0.1.36"
@@ -112,8 +122,16 @@ export function normalizeGitVersion(raw) {
   return stripped;
 }
 
+export function deriveVersionFromGit(cwd = desktopRoot) {
+  return normalizeGitVersion(
+    git(["describe", "--tags", "--match", RELEASE_TAG_PATTERN, "--always", "--dirty"], {
+      cwd,
+    }),
+  );
+}
+
 function deriveVersion() {
-  return normalizeGitVersion(sh("git describe --tags --always --dirty"));
+  return deriveVersionFromGit();
 }
 
 function uniqueOrdered(values) {
