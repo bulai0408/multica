@@ -2,6 +2,7 @@ import { delimiter, resolve } from "node:path";
 import { describe, it, expect } from "vitest";
 import {
   builderArgsForTarget,
+  envWithoutEmptySigningValues,
   envWithLocalBins,
   normalizeGitVersion,
   parsePackageArgs,
@@ -269,5 +270,35 @@ describe("envWithLocalBins", () => {
       workspaceBin,
       "runner-bin",
     ]);
+  });
+});
+
+describe("envWithoutEmptySigningValues", () => {
+  it("removes empty electron-builder signing values", () => {
+    expect(
+      envWithoutEmptySigningValues({
+        CSC_LINK: "",
+        CSC_KEY_PASSWORD: "",
+        CSC_NAME: "",
+        APPLE_ID: "",
+        APPLE_APP_SPECIFIC_PASSWORD: "",
+        APPLE_TEAM_ID: "",
+        KEEP_ME: "",
+      }),
+    ).toEqual({ KEEP_ME: "" });
+  });
+
+  it("preserves configured signing values", () => {
+    expect(
+      envWithoutEmptySigningValues({
+        CSC_LINK: "cert.p12",
+        CSC_KEY_PASSWORD: "password",
+        APPLE_ID: "developer@example.com",
+      }),
+    ).toEqual({
+      CSC_LINK: "cert.p12",
+      CSC_KEY_PASSWORD: "password",
+      APPLE_ID: "developer@example.com",
+    });
   });
 });
