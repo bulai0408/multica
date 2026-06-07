@@ -3,6 +3,7 @@ productName: Multica
 directories:
   buildResources: build
 files:
+  - "!dist/**"
   - "!**/.vscode/*"
   - "!src/*"
   - "!electron.vite.config.*"
