@@ -2,9 +2,9 @@ import { app } from "electron";
 import { readFile } from "fs/promises";
 import { join } from "path";
 import {
-  DEFAULT_RUNTIME_CONFIG,
   parseRuntimeConfig,
   runtimeConfigFromDevEnv,
+  runtimeConfigFromPackagedEnv,
   type RuntimeConfig,
   type RuntimeConfigEnv,
   type RuntimeConfigResult,
@@ -29,7 +29,16 @@ export async function loadRuntimeConfig(options: {
     return { ok: true, config: parseRuntimeConfig(raw) };
   } catch (err) {
     if (isMissingFileError(err)) {
-      return { ok: true, config: { ...DEFAULT_RUNTIME_CONFIG } };
+      try {
+        return { ok: true, config: runtimeConfigFromPackagedEnv(options.env) };
+      } catch (fallbackErr) {
+        return {
+          ok: false,
+          error: {
+            message: errorMessage(fallbackErr),
+          },
+        };
+      }
     }
     return {
       ok: false,

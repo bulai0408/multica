@@ -4,6 +4,7 @@ import {
   deriveWsUrl,
   parseRuntimeConfig,
   runtimeConfigFromDevEnv,
+  runtimeConfigFromPackagedEnv,
 } from "./runtime-config";
 
 describe("runtime config", () => {
@@ -13,6 +14,30 @@ describe("runtime config", () => {
       apiUrl: "https://api.multica.ai",
       wsUrl: "wss://api.multica.ai/ws",
       appUrl: "https://multica.ai",
+    });
+  });
+
+  it("uses cloud defaults when packaged env is unset", () => {
+    expect(runtimeConfigFromPackagedEnv({})).toEqual({
+      schemaVersion: 1,
+      apiUrl: "https://api.multica.ai",
+      wsUrl: "wss://api.multica.ai/ws",
+      appUrl: "https://multica.ai",
+    });
+  });
+
+  it("uses packaged env as production defaults", () => {
+    expect(
+      runtimeConfigFromPackagedEnv({
+        apiUrl: "https://api.selfhost.example.com/",
+        wsUrl: "wss://api.selfhost.example.com/ws/",
+        appUrl: "https://selfhost.example.com/",
+      }),
+    ).toEqual({
+      schemaVersion: 1,
+      apiUrl: "https://api.selfhost.example.com",
+      wsUrl: "wss://api.selfhost.example.com/ws",
+      appUrl: "https://selfhost.example.com",
     });
   });
 
