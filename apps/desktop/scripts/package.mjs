@@ -153,8 +153,12 @@ export const DESCRIBE_ARGS = [
 // Exported (with an optional cwd) so tests can exercise the real describe
 // invocation against a throwaway repo, not just normalizeGitVersion in
 // isolation — the gap that let the Windows quoting regression through CI.
-export function deriveVersion(cwd) {
+export function deriveVersion(cwd = desktopRoot) {
   return normalizeGitVersion(git(DESCRIBE_ARGS, cwd));
+}
+
+export function deriveVersionFromGit(cwd = desktopRoot) {
+  return deriveVersion(cwd);
 }
 
 function uniqueOrdered(values) {
