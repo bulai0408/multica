@@ -1,7 +1,11 @@
 import { delimiter, resolve } from "node:path";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { describe, it, expect } from "vitest";
 import {
   builderArgsForTarget,
+  deriveVersionFromGit,
   envWithoutEmptySigningValues,
   envWithLocalBins,
   normalizeGitVersion,
@@ -44,6 +48,35 @@ describe("normalizeGitVersion", () => {
     // when there are no tags in the history at all.
     expect(normalizeGitVersion("f1415e96")).toBe("0.0.0-f1415e96");
     expect(normalizeGitVersion("abc1234")).toBe("0.0.0-abc1234");
+  });
+});
+
+describe("deriveVersionFromGit", () => {
+  it("ignores self-host release tags when deriving the Desktop app version", () => {
+    const repo = mkdtempSync(resolve(tmpdir(), "multica-desktop-version-"));
+    const git = (...args) =>
+      execFileSync("git", args, { cwd: repo, encoding: "utf-8" }).trim();
+
+    git("init");
+    git("config", "user.email", "test@example.com");
+    git("config", "user.name", "Test User");
+
+    writeFileSync(resolve(repo, "README.md"), "first\n");
+    git("add", "README.md");
+    git("commit", "-m", "first");
+    git("tag", "v0.1.27");
+
+    writeFileSync(resolve(repo, "README.md"), "second\n");
+    git("add", "README.md");
+    git("commit", "-m", "second");
+
+    const shortSha = git("rev-parse", "--short", "HEAD");
+    git(
+      "tag",
+      `selfhost-macos-dmg-v0.1.27-1-g${shortSha}-${shortSha}`,
+    );
+
+    expect(deriveVersionFromGit(repo)).toBe(`0.1.27-1-g${shortSha}`);
   });
 });
 

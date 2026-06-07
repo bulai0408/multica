@@ -11,20 +11,24 @@ import { execSync } from "node:child_process";
  * `apps/desktop/package.json` value, which is "0.1.0" and never bumped —
  * the Settings → Updates panel and any other UI surfacing the version
  * would mislead developers into thinking they're running ancient builds.
- * Fall back to `git describe --tags --always --dirty` (same source the
- * packager uses) so dev shows e.g. `0.2.19-14-gabcdef-dirty`. If git is
- * unavailable for whatever reason, we just return the package.json value.
+ * Fall back to the same semver-tag `git describe` source the packager uses,
+ * so dev shows e.g. `0.2.19-14-gabcdef-dirty` without picking up generated
+ * self-host release tags. If git is unavailable for whatever reason, we just
+ * return the package.json value.
  */
 export function getAppVersion(): string {
   if (app.isPackaged) {
     return app.getVersion();
   }
   try {
-    const raw = execSync("git describe --tags --always --dirty", {
+    const raw = execSync(
+      "git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --always --dirty",
+      {
       cwd: app.getAppPath(),
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
+      },
+    ).trim();
     if (!raw) return app.getVersion();
     return raw.replace(/^v/, "");
   } catch {
