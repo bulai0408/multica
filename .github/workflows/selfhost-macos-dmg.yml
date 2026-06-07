@@ -15,10 +15,6 @@ on:
           - "true"
           - "false"
         default: "true"
-  schedule:
-    # Keep fork/self-host DMG artifacts fresh without relying on upstream's
-    # manual macOS release process.
-    - cron: "17 3 * * *"
   push:
     branches:
       - main
