@@ -6,9 +6,9 @@ Desktop is intentionally not part of that CI release yet: official macOS builds
 still need Apple Developer signing and notarization credentials, so upstream
 ships them through a manual Desktop release path.
 
-Fork/self-host users usually need a different flow: periodically build the
-latest upstream Desktop app with their own deployment URLs and download a macOS
-DMG. The `Self-host macOS DMG` workflow covers that case.
+Fork/self-host users usually need a different flow: build the latest upstream
+Desktop app with their own deployment URLs and download a macOS DMG. The
+`Self-host macOS DMG` workflow covers that case.
 
 ## What the workflow builds
 
@@ -19,12 +19,12 @@ macOS runner and uploads:
 - `multica-desktop-<version>-mac-x64.dmg`
 - `multica-desktop-<version>-mac-arm64.dmg`
 
-Scheduled and manual runs upload the DMGs as GitHub Actions artifacts. Tag runs
-also upload the DMGs to the matching GitHub Release in the fork.
+Manual runs and pushes to `main` upload the DMGs as GitHub Actions artifacts
+and GitHub Release assets. Tag runs upload the DMGs to the matching GitHub
+Release in the fork.
 
-Pushes to the fork's `main` branch build the fork checkout as-is. Scheduled and
-manual runs can instead build a fresh upstream ref by leaving `sync_upstream`
-enabled.
+Pushes to the fork's `main` branch build the fork checkout as-is. Manual runs
+can instead build a fresh upstream ref by leaving `sync_upstream` enabled.
 
 ## Configure self-host URLs
 
@@ -37,7 +37,7 @@ or values are private.
 | `SELFHOST_DESKTOP_API_URL` | Recommended | Backend API URL, for example `https://api.example.com`. |
 | `SELFHOST_DESKTOP_WS_URL` | Optional | WebSocket URL. If omitted, Desktop derives it from the API URL by appending `/ws`. |
 | `SELFHOST_DESKTOP_APP_URL` | Recommended | Web app URL used for login and share links, for example `https://app.example.com`. |
-| `MULTICA_UPSTREAM_REF` | Optional | Default upstream ref for scheduled/manual sync builds. Defaults to `latest`, which means the newest upstream release tag. |
+| `MULTICA_UPSTREAM_REF` | Optional | Default upstream ref for manual sync builds. Defaults to `latest`, which means the newest upstream release tag. |
 
 The workflow also accepts legacy `VITE_API_URL`, `VITE_WS_URL`, and
 `VITE_APP_URL` variables/secrets, but the `SELFHOST_DESKTOP_*` names are
@@ -56,17 +56,14 @@ Manual run:
 3. Leave `sync_upstream` enabled to build from `multica-ai/multica`.
 4. Leave `upstream_ref` as `latest` to build the newest upstream release tag,
    or set it to `main`, a release tag, or another upstream ref.
-5. Download the `selfhost-macos-dmg-*` artifact after the run finishes.
-
-Scheduled run:
-
-- The workflow runs daily and builds `MULTICA_UPSTREAM_REF`, or the newest
-  upstream release tag when that variable is not set.
+5. Download the DMGs from the generated `selfhost-macos-dmg-*` GitHub Release,
+   or from the matching Actions artifact.
 
 Fork sync run:
 
 - Push or merge into the fork's `main` branch after syncing upstream. The
-  workflow builds that fork commit and uploads the DMGs as Actions artifacts.
+  workflow builds that fork commit and uploads the DMGs to a generated
+  `selfhost-macos-dmg-*` GitHub Release and a matching Actions artifact.
 
 Release run:
 

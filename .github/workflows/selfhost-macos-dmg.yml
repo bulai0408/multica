@@ -73,7 +73,7 @@ jobs:
             fi
           fi
 
-          version="$(git describe --tags --always --dirty)"
+          version="$(git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --always --dirty)"
           short_sha="$(git rev-parse --short=12 HEAD)"
           source_sha="$(git rev-parse HEAD)"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
