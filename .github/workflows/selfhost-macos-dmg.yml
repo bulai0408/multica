@@ -124,11 +124,9 @@ jobs:
           path: apps/desktop/dist/**/*.dmg
           if-no-files-found: error
 
-      - name: Upload DMGs to tag release
-        if: github.ref_type == 'tag'
+      - name: Upload DMGs to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ github.ref_name }}
         shell: bash
         run: |
           set -euo pipefail
@@ -142,11 +140,36 @@ jobs:
             exit 1
           fi
 
-          if ! gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
-            gh release create "${RELEASE_TAG}" \
-              --target "${{ steps.source.outputs.source_sha }}" \
-              --title "${RELEASE_TAG}" \
-              --notes "Self-host macOS Desktop DMG for ${RELEASE_TAG}."
+          version="${{ steps.source.outputs.version }}"
+          short_sha="${{ steps.source.outputs.short_sha }}"
+          source_sha="${{ steps.source.outputs.source_sha }}"
+
+          create_flags=()
+          edit_flags=()
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            release_tag="${GITHUB_REF_NAME}"
+            release_title="${GITHUB_REF_NAME}"
+            release_notes="Self-host macOS Desktop DMG for ${GITHUB_REF_NAME}."
+          else
+            release_tag="selfhost-macos-dmg-${version}-${short_sha}"
+            release_title="Self-host macOS DMG ${version}"
+            release_notes="Self-host macOS Desktop DMG for ${version} (${source_sha})."
+            create_flags+=(--prerelease --latest=false)
+            edit_flags+=(--prerelease --latest=false)
           fi
 
-          gh release upload "${RELEASE_TAG}" "${files[@]}" --clobber
+          if ! gh release view "${release_tag}" >/dev/null 2>&1; then
+            gh release create "${release_tag}" \
+              --target "${source_sha}" \
+              --title "${release_title}" \
+              --notes "${release_notes}" \
+              "${create_flags[@]}"
+          else
+            gh release edit "${release_tag}" \
+              --target "${source_sha}" \
+              --title "${release_title}" \
+              --notes "${release_notes}" \
+              "${edit_flags[@]}"
+          fi
+
+          gh release upload "${release_tag}" "${files[@]}" --clobber
