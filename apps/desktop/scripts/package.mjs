@@ -178,6 +178,25 @@ export function envWithLocalBins(env = process.env, root = desktopRoot) {
   return { ...env, [pathKey]: mergedPath };
 }
 
+const ELECTRON_BUILDER_SIGNING_ENV_KEYS = [
+  "CSC_LINK",
+  "CSC_KEY_PASSWORD",
+  "CSC_NAME",
+  "APPLE_ID",
+  "APPLE_APP_SPECIFIC_PASSWORD",
+  "APPLE_TEAM_ID",
+];
+
+export function envWithoutEmptySigningValues(env = process.env) {
+  const cleaned = { ...env };
+  for (const key of ELECTRON_BUILDER_SIGNING_ENV_KEYS) {
+    if (cleaned[key] === "") {
+      delete cleaned[key];
+    }
+  }
+  return cleaned;
+}
+
 function hostPlatformKey(platform = process.platform) {
   if (platform === "darwin") return "mac";
   if (platform === "win32") return "win";
@@ -459,7 +478,7 @@ function main() {
     const result = spawnSync("electron-builder", builderArgs, {
       stdio: "inherit",
       cwd: desktopRoot,
-      env: envWithLocalBins(),
+      env: envWithLocalBins(envWithoutEmptySigningValues()),
       shell: true,
     });
 
