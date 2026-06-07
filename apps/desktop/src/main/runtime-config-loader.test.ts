@@ -53,6 +53,29 @@ describe("loadRuntimeConfig", () => {
     });
   });
 
+  it("uses packaged env defaults when packaged config is absent", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "multica-desktop-config-"));
+    await expect(
+      loadRuntimeConfig({
+        isDev: false,
+        configPath: join(dir, "missing.json"),
+        env: {
+          apiUrl: "https://api.selfhost.example.com/",
+          wsUrl: "wss://api.selfhost.example.com/ws/",
+          appUrl: "https://selfhost.example.com/",
+        },
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      config: {
+        schemaVersion: 1,
+        apiUrl: "https://api.selfhost.example.com",
+        wsUrl: "wss://api.selfhost.example.com/ws",
+        appUrl: "https://selfhost.example.com",
+      },
+    });
+  });
+
   it("parses a valid packaged desktop.json", async () => {
     const dir = await mkdtemp(join(tmpdir(), "multica-desktop-config-"));
     const configPath = join(dir, "desktop.json");
