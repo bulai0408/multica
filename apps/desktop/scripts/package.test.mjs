@@ -6,6 +6,7 @@ import { afterEach, describe, it, expect } from "vitest";
 import {
   builderArgsForTarget,
   deriveVersion,
+  deriveVersionFromGit,
   DESCRIBE_ARGS,
   envWithoutEmptySigningValues,
   envWithLocalBins,
@@ -151,6 +152,15 @@ describe("deriveVersion (real git describe)", () => {
   it("falls back to 0.0.0-g<hash> when no semver tag is reachable", () => {
     const { dir } = initRepo();
     expect(deriveVersion(dir)).toMatch(/^0\.0\.0-g[0-9a-f]+$/);
+  });
+
+  it("ignores self-host release tags when deriving the Desktop app version", () => {
+    const { dir, run } = initRepo();
+    run("tag", "v0.1.27");
+    run("commit", "-q", "--allow-empty", "-m", "selfhost");
+    const shortSha = run("rev-parse", "--short", "HEAD").trim();
+    run("tag", "selfhost-macos-dmg-v0.1.27-1-g" + shortSha + "-" + shortSha);
+    expect(deriveVersionFromGit(dir)).toBe("0.1.27-1-g" + shortSha);
   });
 });
 
