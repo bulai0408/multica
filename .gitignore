@@ -78,3 +78,6 @@ data/
 # Python (agent tooling)
 __pycache__/
 *.pyc
+
+# runtime stderr logs (make start redirects backend/frontend stderr here)
+*.err
