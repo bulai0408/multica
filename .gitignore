@@ -74,3 +74,6 @@ data/
 .kilo
 .idea
 .gstack/
+
+# runtime stderr logs (make start redirects backend/frontend stderr here)
+*.err
