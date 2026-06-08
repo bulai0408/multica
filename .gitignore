@@ -68,3 +68,6 @@ server/server
 data/
 .kilo
 .idea
+
+# runtime stderr logs (make start redirects backend/frontend stderr here)
+*.err
