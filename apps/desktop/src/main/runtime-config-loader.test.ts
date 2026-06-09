@@ -34,7 +34,30 @@ describe("loadRuntimeConfig", () => {
     });
   });
 
-  it("uses cloud defaults when packaged config is absent", async () => {
+  it("uses build-time env defaults when packaged config is absent", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "multica-desktop-config-"));
+    await expect(
+      loadRuntimeConfig({
+        isDev: false,
+        configPath: join(dir, "missing.json"),
+        env: {
+          apiUrl: "https://multica.kami.fit",
+          wsUrl: "wss://multica.kami.fit/ws",
+          appUrl: "https://multica.kami.fit",
+        },
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      config: {
+        schemaVersion: 1,
+        apiUrl: "https://multica.kami.fit",
+        wsUrl: "wss://multica.kami.fit/ws",
+        appUrl: "https://multica.kami.fit",
+      },
+    });
+  });
+
+  it("uses cloud defaults when packaged config and build-time env are absent", async () => {
     const dir = await mkdtemp(join(tmpdir(), "multica-desktop-config-"));
     await expect(
       loadRuntimeConfig({

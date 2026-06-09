@@ -137,6 +137,19 @@ jobs:
         run: |
           set -euo pipefail
 
+          if [[ -z "${VITE_API_URL:-}" ]]; then
+            echo "::error::SELFHOST_DESKTOP_API_URL or VITE_API_URL must be set so the packaged Desktop app does not fall back to the official API."
+            exit 1
+          fi
+
+          echo "[package] Desktop runtime API → ${VITE_API_URL}"
+          if [[ -n "${VITE_WS_URL:-}" ]]; then
+            echo "[package] Desktop runtime WS → ${VITE_WS_URL}"
+          fi
+          if [[ -n "${VITE_APP_URL:-}" ]]; then
+            echo "[package] Desktop runtime app → ${VITE_APP_URL}"
+          fi
+
           for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
             if [[ -z "${!name:-}" ]]; then
               unset "${name}"

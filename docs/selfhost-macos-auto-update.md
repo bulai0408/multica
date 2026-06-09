@@ -60,6 +60,12 @@ resolved by `MULTICA_DESKTOP_UPDATE_*`, `GITHUB_REPOSITORY`, or `remote.origin`.
 A Docker deployment on a host such as `fnos` only affects the server URL unless
 you also publish Desktop update assets to GitHub Releases.
 
+For packaged production builds, `SELFHOST_DESKTOP_*` is passed through to the
+Electron build as `VITE_*` and becomes the app's built-in default runtime config.
+An installed user's `~/.multica/desktop.json` still takes precedence. If no
+user config exists and no build-time self-host URL was provided, Desktop falls
+back to the official Multica Cloud API.
+
 Unsigned local/fork builds work with:
 
 ```text

@@ -50,6 +50,32 @@ export function runtimeConfigFromDevEnv(env: RuntimeConfigEnv): RuntimeConfig {
   };
 }
 
+export function runtimeConfigFromBuildEnv(env: RuntimeConfigEnv): RuntimeConfig {
+  const hasApiUrl = hasValue(env.apiUrl);
+  const hasWsUrl = hasValue(env.wsUrl);
+  const hasAppUrl = hasValue(env.appUrl);
+
+  if (!hasApiUrl && !hasWsUrl && !hasAppUrl) {
+    return { ...DEFAULT_RUNTIME_CONFIG };
+  }
+
+  if (!hasApiUrl) {
+    throw new Error(
+      "VITE_API_URL must be set when VITE_WS_URL or VITE_APP_URL is set",
+    );
+  }
+
+  const apiUrl = normalizeHttpUrl(env.apiUrl ?? "", "VITE_API_URL");
+  return {
+    schemaVersion: 1,
+    apiUrl,
+    wsUrl: hasWsUrl ? normalizeWsUrl(env.wsUrl ?? "", "VITE_WS_URL") : deriveWsUrl(apiUrl),
+    appUrl: hasAppUrl
+      ? normalizeHttpUrl(env.appUrl ?? "", "VITE_APP_URL")
+      : deriveAppUrl(apiUrl),
+  };
+}
+
 export function parseRuntimeConfig(raw: string): RuntimeConfig {
   let parsed: unknown;
   try {
@@ -176,4 +202,8 @@ function joinPath(base: string, suffix: string): string {
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
+}
+
+function hasValue(value: string | undefined): boolean {
+  return typeof value === "string" && value.trim().length > 0;
 }
