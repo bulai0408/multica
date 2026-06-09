@@ -120,6 +120,65 @@ function uniqueOrdered(values) {
   return [...new Set(values)];
 }
 
+function cleanGitHubPathSegment(value) {
+  const segment = String(value ?? "").trim().replace(/\.git$/, "");
+  if (!/^[A-Za-z0-9_.-]+$/.test(segment)) return null;
+  return segment;
+}
+
+export function parseGitHubRepository(value) {
+  if (!value) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const shorthand = raw.match(/^([^/\s]+)\/([^/\s]+)$/);
+  const https = raw.match(
+    /^https?:\/\/github\.com\/([^/\s]+)\/([^/\s?#]+)(?:[?#].*)?$/,
+  );
+  const sshScp = raw.match(/^git@github\.com:([^/\s]+)\/([^/\s]+)$/);
+  const sshUrl = raw.match(/^ssh:\/\/git@github\.com\/([^/\s]+)\/([^/\s]+)$/);
+  const match = https ?? sshScp ?? sshUrl ?? shorthand;
+  if (!match) return null;
+
+  const owner = cleanGitHubPathSegment(match[1]);
+  const repo = cleanGitHubPathSegment(match[2]);
+  if (!owner || !repo) return null;
+  return { owner, repo };
+}
+
+export function resolveDesktopUpdateRepository({
+  env = process.env,
+  remoteUrl = "",
+} = {}) {
+  const explicitOwner = env.MULTICA_DESKTOP_UPDATE_OWNER;
+  const explicitRepo = env.MULTICA_DESKTOP_UPDATE_REPO;
+  if (explicitOwner || explicitRepo) {
+    if (!explicitOwner || !explicitRepo) {
+      throw new Error(
+        "[package] MULTICA_DESKTOP_UPDATE_OWNER and MULTICA_DESKTOP_UPDATE_REPO must be provided together",
+      );
+    }
+    const parsed = parseGitHubRepository(`${explicitOwner}/${explicitRepo}`);
+    if (!parsed) {
+      throw new Error(
+        "[package] MULTICA_DESKTOP_UPDATE_OWNER / MULTICA_DESKTOP_UPDATE_REPO must name a valid GitHub owner/repo",
+      );
+    }
+    return parsed;
+  }
+
+  for (const candidate of [
+    env.MULTICA_DESKTOP_UPDATE_REPOSITORY,
+    env.GITHUB_REPOSITORY,
+    remoteUrl,
+  ]) {
+    const parsed = parseGitHubRepository(candidate);
+    if (parsed) return parsed;
+  }
+
+  return null;
+}
+
 export function envWithLocalBins(env = process.env, root = desktopRoot) {
   const pathKey =
     Object.keys(env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
@@ -272,6 +331,7 @@ export function builderArgsForTarget(
   {
     disableMacNotarize = false,
     hostPlatform = process.platform,
+    updateRepository = null,
     useScopedOutputDir = false,
   } = {},
 ) {
@@ -299,6 +359,12 @@ export function builderArgsForTarget(
       `-c.directories.output=dist/${target.platform}-${target.arch}`,
     );
   }
+  if (updateRepository) {
+    builderArgs.push(
+      `-c.publish.owner=${updateRepository.owner}`,
+      `-c.publish.repo=${updateRepository.repo}`,
+    );
+  }
   // electron-builder's update metadata file is `latest.yml` for Windows
   // regardless of arch (only Linux gets an arch suffix automatically — see
   // app-builder-lib's getArchPrefixForUpdateFile). Without an explicit
@@ -318,9 +384,17 @@ function main() {
   const passthrough = stripLeadingSeparator(process.argv.slice(2));
   const parsed = parsePackageArgs(passthrough);
   const buildMatrix = resolveBuildMatrix(parsed);
+  const updateRepository = resolveDesktopUpdateRepository({
+    remoteUrl: sh("git config --get remote.origin.url"),
+  });
   console.log(
     `[package] build matrix → ${buildMatrix.map(formatTarget).join(", ")}`,
   );
+  if (updateRepository) {
+    console.log(
+      `[package] Desktop update feed → ${updateRepository.owner}/${updateRepository.repo}`,
+    );
+  }
 
   // Step 1: build the Electron main/preload/renderer bundles. Without
   // this step electron-builder silently packages whatever is already in
@@ -395,6 +469,7 @@ function main() {
     const builderArgs = builderArgsForTarget(target, parsed, version, {
       disableMacNotarize,
       hostPlatform: process.platform,
+      updateRepository,
       useScopedOutputDir,
     });
 
