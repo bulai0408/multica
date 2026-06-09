@@ -6,6 +6,18 @@ type Handler = (...args: unknown[]) => unknown;
 const ctx = vi.hoisted(() => ({
   handlers: new Map<string, Handler[]>(),
   ipcHandle: vi.fn(),
+  autoUpdater: {
+    autoDownload: false,
+    autoInstallOnAppQuit: false,
+    channel: undefined as string | undefined,
+    on: vi.fn(),
+    checkForUpdates: vi.fn(async () => ({
+      updateInfo: { version: "0.3.18" },
+      isUpdateAvailable: false,
+    })),
+    downloadUpdate: vi.fn(),
+    quitAndInstall: vi.fn(),
+  },
   checkForUpdates: vi.fn(async () => ({
     updateInfo: { version: "0.3.18" },
     isUpdateAvailable: false,
@@ -16,21 +28,16 @@ const ctx = vi.hoisted(() => ({
 }));
 
 vi.mock("electron-updater", () => {
-  const autoUpdater = {
-    autoDownload: false,
-    autoInstallOnAppQuit: false,
-    channel: undefined as string | undefined,
-    on: vi.fn((event: string, handler: Handler) => {
+  ctx.autoUpdater.on.mockImplementation((event: string, handler: Handler) => {
       const handlers = ctx.handlers.get(event) ?? [];
       handlers.push(handler);
       ctx.handlers.set(event, handlers);
-      return autoUpdater;
-    }),
-    checkForUpdates: ctx.checkForUpdates,
-    downloadUpdate: ctx.downloadUpdate,
-    quitAndInstall: ctx.quitAndInstall,
-  };
-  return { autoUpdater };
+      return ctx.autoUpdater;
+    });
+  ctx.autoUpdater.checkForUpdates = ctx.checkForUpdates;
+  ctx.autoUpdater.downloadUpdate = ctx.downloadUpdate;
+  ctx.autoUpdater.quitAndInstall = ctx.quitAndInstall;
+  return { autoUpdater: ctx.autoUpdater };
 });
 
 vi.mock("electron", () => ({
@@ -115,6 +122,10 @@ describe("setupAutoUpdater", () => {
     ctx.downloadUpdate.mockClear();
     ctx.quitAndInstall.mockClear();
     ctx.getVersion.mockClear();
+    ctx.autoUpdater.autoDownload = false;
+    ctx.autoUpdater.autoInstallOnAppQuit = false;
+    ctx.autoUpdater.channel = undefined;
+    ctx.autoUpdater.on.mockClear();
   });
 
   afterEach(() => {
@@ -130,6 +141,65 @@ describe("setupAutoUpdater", () => {
 
     expect(send).toHaveBeenCalledWith("updater:download-progress", {
       percent: 42,
+    });
+  });
+
+  it("opens self-host macOS updates manually by forwarding a release page URL", async () => {
+    const { win, send } = makeWindow();
+    setupAutoUpdater(() => win, {
+      updateConfig: {
+        mode: "manual",
+        repository: { owner: "bulai0408", repo: "multica" },
+      },
+    });
+
+    emitUpdater("update-available", {
+      version: "0.1.30",
+      releaseNotes: "Release notes",
+    });
+
+    expect(ctx.autoUpdater.autoDownload).toBe(false);
+    expect(ctx.autoUpdater.autoInstallOnAppQuit).toBe(false);
+    expect(send).toHaveBeenCalledWith("updater:update-available", {
+      version: "0.1.30",
+      releaseNotes: "Release notes",
+      releaseUrl: "https://github.com/bulai0408/multica/releases/tag/v0.1.30",
+    });
+
+    ctx.checkForUpdates.mockResolvedValueOnce({
+      updateInfo: { version: "0.1.30" },
+      isUpdateAvailable: true,
+    });
+    const checkHandler = ctx.ipcHandle.mock.calls.find(
+      ([channel]) => channel === "updater:check",
+    )?.[1] as Handler | undefined;
+
+    await expect(checkHandler?.()).resolves.toEqual({
+      ok: true,
+      currentVersion: "0.3.17",
+      latestVersion: "0.1.30",
+      available: true,
+      updateMode: "manual",
+      releaseUrl: "https://github.com/bulai0408/multica/releases/tag/v0.1.30",
+    });
+  });
+
+  it("keeps signed updater builds on the automatic install path", () => {
+    const { win, send } = makeWindow();
+    setupAutoUpdater(() => win, {
+      updateConfig: {
+        mode: "automatic",
+        repository: { owner: "multica-ai", repo: "multica" },
+      },
+    });
+
+    emitUpdater("update-available", { version: "0.1.30" });
+
+    expect(ctx.autoUpdater.autoDownload).toBe(true);
+    expect(ctx.autoUpdater.autoInstallOnAppQuit).toBe(true);
+    expect(send).toHaveBeenCalledWith("updater:update-available", {
+      version: "0.1.30",
+      releaseNotes: undefined,
     });
   });
 

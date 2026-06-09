@@ -64,7 +64,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Validate macOS signing secrets
+      - name: Resolve macOS update mode
+        id: update-mode
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
@@ -83,14 +84,20 @@ jobs:
           done
 
           if ((${#missing[@]})); then
-            echo "::error::Self-host macOS updater releases must be Developer ID signed and notarized so Squirrel.Mac can install downloaded updates. Configure these repository secrets before publishing: ${missing[*]}"
-            exit 1
+            echo "mode=manual" >> "$GITHUB_OUTPUT"
+            echo "has_signing=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Missing Developer ID signing/notarization secrets: ${missing[*]}. Publishing a manual-install macOS update instead; clients will open the GitHub Release download page instead of using Squirrel.Mac auto-install."
+          else
+            echo "mode=automatic" >> "$GITHUB_OUTPUT"
+            echo "has_signing=true" >> "$GITHUB_OUTPUT"
+            echo "[release] Developer ID signing/notarization secrets are present; publishing automatic updater assets."
           fi
 
       - name: Prepare GitHub Release
         id: release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPDATE_MODE: ${{ steps.update-mode.outputs.mode }}
         shell: bash
         run: |
           set -euo pipefail
@@ -135,7 +142,11 @@ jobs:
 
           source_sha="$(git rev-parse HEAD)"
           release_title="${release_tag}"
-          release_notes="Self-host macOS Desktop updater assets for ${release_tag} (${source_sha})."
+          if [[ "${UPDATE_MODE}" == "manual" ]]; then
+            release_notes="Self-host macOS Desktop manual-install assets for ${release_tag} (${source_sha}). This build is not Developer ID signed/notarized, so Desktop clients open this release page for download and manual install."
+          else
+            release_notes="Self-host macOS Desktop automatic updater assets for ${release_tag} (${source_sha})."
+          fi
 
           create_flags=(--draft)
           edit_flags=()
@@ -178,6 +189,7 @@ jobs:
           # upstream multica-ai/multica feed.
           MULTICA_DESKTOP_VERSION: ${{ steps.release.outputs.version }}
           MULTICA_DESKTOP_UPDATE_REPOSITORY: ${{ github.repository }}
+          MULTICA_DESKTOP_UPDATE_MODE: ${{ steps.update-mode.outputs.mode }}
           VITE_API_URL: ${{ vars.SELFHOST_DESKTOP_API_URL || secrets.SELFHOST_DESKTOP_API_URL || vars.VITE_API_URL || secrets.VITE_API_URL || '' }}
           VITE_WS_URL: ${{ vars.SELFHOST_DESKTOP_WS_URL || secrets.SELFHOST_DESKTOP_WS_URL || vars.VITE_WS_URL || secrets.VITE_WS_URL || '' }}
           VITE_APP_URL: ${{ vars.SELFHOST_DESKTOP_APP_URL || secrets.SELFHOST_DESKTOP_APP_URL || vars.VITE_APP_URL || secrets.VITE_APP_URL || '' }}
@@ -202,6 +214,12 @@ jobs:
           if [[ -n "${VITE_APP_URL:-}" ]]; then
             echo "[package] Desktop runtime app → ${VITE_APP_URL}"
           fi
+          echo "[package] Desktop update mode → ${MULTICA_DESKTOP_UPDATE_MODE}"
+
+          if [[ "${MULTICA_DESKTOP_UPDATE_MODE}" == "manual" ]]; then
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+            unset CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+          fi
 
           node scripts/package.mjs --mac "--${SELFHOST_DESKTOP_ARCH}" --publish always
 
@@ -211,6 +229,7 @@ jobs:
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
           VERSION: ${{ steps.release.outputs.version }}
           SELFHOST_DESKTOP_ARCH: ${{ env.SELFHOST_DESKTOP_ARCH }}
+          UPDATE_MODE: ${{ steps.update-mode.outputs.mode }}
         shell: bash
         run: |
           set -euo pipefail
@@ -234,13 +253,18 @@ jobs:
           ditto -x -k "${tmp_dir}/${zip_name}" "${tmp_dir}/app"
           app_path="${tmp_dir}/app/Multica.app"
           test -d "${app_path}"
-          codesign --verify --deep --strict --verbose=2 "${app_path}"
-          team_id="$(codesign -dv --verbose=4 "${app_path}" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
-          if [[ -z "${team_id}" || "${team_id}" == "not set" ]]; then
-            echo "::error::${zip_name} is not Developer ID signed; TeamIdentifier=${team_id:-missing}"
-            exit 1
+
+          if [[ "${UPDATE_MODE}" == "automatic" ]]; then
+            codesign --verify --deep --strict --verbose=2 "${app_path}"
+            team_id="$(codesign -dv --verbose=4 "${app_path}" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
+            if [[ -z "${team_id}" || "${team_id}" == "not set" ]]; then
+              echo "::error::${zip_name} is not Developer ID signed; TeamIdentifier=${team_id:-missing}"
+              exit 1
+            fi
+            spctl -a -vv --type execute "${app_path}"
+          else
+            echo "[verify] Manual update mode: skipping Developer ID and Gatekeeper checks because clients open the release download page instead of auto-installing the ZIP."
           fi
-          spctl -a -vv --type execute "${app_path}"
 
       - name: Publish verified GitHub Release
         env:

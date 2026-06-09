@@ -1,11 +1,11 @@
 import { autoUpdater, type UpdateDownloadedEvent } from "electron-updater";
 import { app, type BrowserWindow, ipcMain } from "electron";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
-// Silent background updates: electron-updater downloads on its own as soon
-// as `update-available` fires; we only surface UI when the package is fully
-// downloaded and ready to install on next quit.
-autoUpdater.autoDownload = true;
-autoUpdater.autoInstallOnAppQuit = true;
+type UpdateMode = "automatic" | "manual";
+type UpdateRepository = { owner: string; repo: string };
+type UpdateConfig = { mode: UpdateMode; repository: UpdateRepository | null };
 
 // Windows arm64 ships its own update metadata channel because
 // electron-builder's `latest.yml` is not arch-suffixed on Windows — both
@@ -26,6 +26,8 @@ export type ManualUpdateCheckResult =
       currentVersion: string;
       latestVersion: string;
       available: boolean;
+      updateMode: UpdateMode;
+      releaseUrl?: string;
     }
   | { ok: false; error: string };
 
@@ -37,8 +39,83 @@ type RendererChannel =
   | "updater:update-downloaded"
   | "updater:error";
 
+type PackagedMetadata = {
+  multicaUpdateMode?: unknown;
+  multicaUpdateRepository?: unknown;
+  repository?: unknown;
+};
+
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function cleanGitHubPathSegment(value: string): string | null {
+  const segment = value.trim().replace(/\.git$/, "");
+  if (!/^[A-Za-z0-9_.-]+$/.test(segment)) return null;
+  return segment;
+}
+
+function parseGitHubRepository(value: unknown): UpdateRepository | null {
+  if (!value) return null;
+
+  if (typeof value === "object" && "url" in value) {
+    return parseGitHubRepository((value as { url?: unknown }).url);
+  }
+
+  if (typeof value !== "string") return null;
+  const raw = value.trim();
+  if (!raw) return null;
+
+  const shorthand = raw.match(/^([^/\s]+)\/([^/\s]+)$/);
+  const https = raw.match(
+    /^https?:\/\/github\.com\/([^/\s]+)\/([^/\s?#]+)(?:[?#].*)?$/,
+  );
+  const sshScp = raw.match(/^git@github\.com:([^/\s]+)\/([^/\s]+)$/);
+  const sshUrl = raw.match(/^ssh:\/\/git@github\.com\/([^/\s]+)\/([^/\s]+)$/);
+  const match = https ?? sshScp ?? sshUrl ?? shorthand;
+  if (!match) return null;
+
+  const owner = cleanGitHubPathSegment(match[1]);
+  const repo = cleanGitHubPathSegment(match[2]);
+  if (!owner || !repo) return null;
+  return { owner, repo };
+}
+
+function readPackagedMetadata(): PackagedMetadata {
+  try {
+    const raw = readFileSync(join(app.getAppPath(), "package.json"), "utf8");
+    const parsed = JSON.parse(raw) as PackagedMetadata;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function resolvePackagedUpdateConfig(): UpdateConfig {
+  const metadata = readPackagedMetadata();
+  const mode: UpdateMode =
+    metadata.multicaUpdateMode === "manual" ? "manual" : "automatic";
+  return {
+    mode,
+    repository: parseGitHubRepository(
+      metadata.multicaUpdateRepository ?? metadata.repository,
+    ),
+  };
+}
+
+function applyUpdateMode(mode: UpdateMode): void {
+  const automatic = mode === "automatic";
+  autoUpdater.autoDownload = automatic;
+  autoUpdater.autoInstallOnAppQuit = automatic;
+}
+
+function releaseUrlForUpdate(
+  repository: UpdateRepository | null,
+  version: string | undefined,
+): string | undefined {
+  if (!repository || !version) return undefined;
+  const tag = version.startsWith("v") ? version : `v${version}`;
+  return `https://github.com/${repository.owner}/${repository.repo}/releases/tag/${encodeURIComponent(tag)}`;
 }
 
 function isDestroyedObjectError(err: unknown): boolean {
@@ -91,13 +168,22 @@ function checkForUpdatesOnce(): Promise<unknown> {
   return p;
 }
 
-export function setupAutoUpdater(getMainWindow: () => BrowserWindow | null): void {
+export function setupAutoUpdater(
+  getMainWindow: () => BrowserWindow | null,
+  options: { updateConfig?: UpdateConfig } = {},
+): void {
+  const updateConfig = options.updateConfig ?? resolvePackagedUpdateConfig();
+  applyUpdateMode(updateConfig.mode);
+
   autoUpdater.on("update-available", (info) => {
-    // Forwarded for renderer-side state tracking only; the notification UI
-    // does not render an "available" affordance with autoDownload=true.
+    const releaseUrl =
+      updateConfig.mode === "manual"
+        ? releaseUrlForUpdate(updateConfig.repository, info.version)
+        : undefined;
     sendToLiveRenderer(getMainWindow(), "updater:update-available", {
       version: info.version,
       releaseNotes: info.releaseNotes,
+      ...(releaseUrl ? { releaseUrl } : {}),
     });
   });
 
@@ -154,6 +240,11 @@ export function setupAutoUpdater(getMainWindow: () => BrowserWindow | null): voi
         currentVersion,
         latestVersion: result?.updateInfo.version ?? currentVersion,
         available: result?.isUpdateAvailable ?? false,
+        updateMode: updateConfig.mode,
+        releaseUrl:
+          updateConfig.mode === "manual" && result?.isUpdateAvailable
+            ? releaseUrlForUpdate(updateConfig.repository, result.updateInfo.version)
+            : undefined,
       };
     } catch (err) {
       return {

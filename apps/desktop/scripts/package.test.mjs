@@ -8,6 +8,7 @@ import {
   parsePackageArgs,
   parseGitHubRepository,
   resolveDesktopUpdateRepository,
+  resolveDesktopUpdateMode,
   resolveBuildMatrix,
   stripLeadingSeparator,
 } from "./package.mjs";
@@ -212,10 +213,13 @@ describe("builderArgsForTarget", () => {
         "1.2.3",
         {
           updateRepository: { owner: "bulai0408", repo: "multica" },
+          updateMode: "manual",
         },
       ),
     ).toEqual([
       "-c.extraMetadata.version=1.2.3",
+      "-c.extraMetadata.multicaUpdateMode=manual",
+      "-c.extraMetadata.multicaUpdateRepository=bulai0408/multica",
       "--mac",
       "--arm64",
       "--publish",
@@ -245,6 +249,7 @@ describe("builderArgsForTarget", () => {
       ),
     ).toEqual([
       "-c.extraMetadata.version=1.2.3",
+      "-c.extraMetadata.multicaUpdateMode=automatic",
       "-c.mac.notarize=false",
       "--win",
       "nsis",
@@ -272,6 +277,7 @@ describe("builderArgsForTarget", () => {
       ),
     ).toEqual([
       "-c.extraMetadata.version=1.2.3",
+      "-c.extraMetadata.multicaUpdateMode=automatic",
       "--win",
       "nsis",
       "--x64",
@@ -297,6 +303,7 @@ describe("builderArgsForTarget", () => {
       ),
     ).toEqual([
       "-c.extraMetadata.version=1.2.3",
+      "-c.extraMetadata.multicaUpdateMode=automatic",
       "--linux",
       "AppImage",
       "--x64",
@@ -371,6 +378,24 @@ describe("resolveDesktopUpdateRepository", () => {
         remoteUrl: "",
       }),
     ).toThrow(/MULTICA_DESKTOP_UPDATE_OWNER and MULTICA_DESKTOP_UPDATE_REPO/);
+  });
+});
+
+describe("resolveDesktopUpdateMode", () => {
+  it("defaults to automatic updates", () => {
+    expect(resolveDesktopUpdateMode({})).toBe("automatic");
+  });
+
+  it("accepts explicit manual updates", () => {
+    expect(
+      resolveDesktopUpdateMode({ MULTICA_DESKTOP_UPDATE_MODE: "manual" }),
+    ).toBe("manual");
+  });
+
+  it("rejects unknown update modes", () => {
+    expect(() =>
+      resolveDesktopUpdateMode({ MULTICA_DESKTOP_UPDATE_MODE: "silent" }),
+    ).toThrow(/MULTICA_DESKTOP_UPDATE_MODE/);
   });
 });
 

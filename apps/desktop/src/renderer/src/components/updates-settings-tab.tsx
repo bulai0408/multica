@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { AlertCircle, ArrowDownToLine, Check, Loader2 } from "lucide-react";
+import { AlertCircle, ArrowDownToLine, Check, ExternalLink, Loader2 } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { useT } from "@multica/views/i18n";
 
@@ -7,7 +7,12 @@ type CheckState =
   | { status: "idle" }
   | { status: "checking" }
   | { status: "up-to-date" }
-  | { status: "available"; latestVersion: string }
+  | {
+      status: "available";
+      latestVersion: string;
+      updateMode: "automatic" | "manual";
+      releaseUrl?: string;
+    }
   | { status: "error"; message: string };
 
 export function UpdatesSettingsTab() {
@@ -24,10 +29,20 @@ export function UpdatesSettingsTab() {
     }
     setState(
       result.available
-        ? { status: "available", latestVersion: result.latestVersion }
+        ? {
+            status: "available",
+            latestVersion: result.latestVersion,
+            updateMode: result.updateMode,
+            releaseUrl: result.releaseUrl,
+          }
         : { status: "up-to-date" },
     );
   }, []);
+
+  const handleOpenDownload = useCallback(() => {
+    if (state.status !== "available" || !state.releaseUrl) return;
+    void window.desktopAPI.openExternal(state.releaseUrl);
+  }, [state]);
 
   return (
     <div>
@@ -61,7 +76,13 @@ export function UpdatesSettingsTab() {
             {state.status === "available" && (
               <p className="text-sm text-muted-foreground mt-2 inline-flex items-center gap-1.5">
                 <ArrowDownToLine className="size-3.5 text-primary" />
-                {t(($) => $.desktop.updates.downloading, { version: state.latestVersion })}
+                {state.updateMode === "manual"
+                  ? t(($) => $.desktop.updates.manual_available, {
+                      version: state.latestVersion,
+                    })
+                  : t(($) => $.desktop.updates.downloading, {
+                      version: state.latestVersion,
+                    })}
               </p>
             )}
             {state.status === "error" && (
@@ -75,13 +96,26 @@ export function UpdatesSettingsTab() {
             <Button
               variant="outline"
               size="sm"
-              onClick={handleCheck}
+              onClick={
+                state.status === "available" &&
+                state.updateMode === "manual" &&
+                state.releaseUrl
+                  ? handleOpenDownload
+                  : handleCheck
+              }
               disabled={state.status === "checking"}
             >
               {state.status === "checking" ? (
                 <>
                   <Loader2 className="size-3.5 animate-spin" />
                   {t(($) => $.desktop.updates.checking)}
+                </>
+              ) : state.status === "available" &&
+                state.updateMode === "manual" &&
+                state.releaseUrl ? (
+                <>
+                  <ExternalLink className="size-3.5" />
+                  {t(($) => $.desktop.updates.open_download)}
                 </>
               ) : (
                 t(($) => $.desktop.updates.check_now)

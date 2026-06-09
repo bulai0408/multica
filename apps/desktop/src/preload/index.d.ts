@@ -128,7 +128,13 @@ interface DaemonAPI {
 }
 
 interface UpdaterAPI {
-  onUpdateAvailable: (callback: (info: { version: string; releaseNotes?: string }) => void) => () => void;
+  onUpdateAvailable: (
+    callback: (info: {
+      version: string;
+      releaseNotes?: string;
+      releaseUrl?: string;
+    }) => void,
+  ) => () => void;
   onDownloadProgress: (callback: (progress: { percent: number }) => void) => () => void;
   onUpdateDownloaded: (
     callback: (info: { version: string; releaseNotes?: string }) => void,
@@ -137,7 +143,14 @@ interface UpdaterAPI {
   downloadUpdate: () => Promise<void>;
   installUpdate: () => Promise<{ ok: true } | { ok: false; error: string }>;
   checkForUpdates: () => Promise<
-    | { ok: true; currentVersion: string; latestVersion: string; available: boolean }
+    | {
+        ok: true;
+        currentVersion: string;
+        latestVersion: string;
+        available: boolean;
+        updateMode: "automatic" | "manual";
+        releaseUrl?: string;
+      }
     | { ok: false; error: string }
   >;
 }
