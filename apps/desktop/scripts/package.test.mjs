@@ -2,6 +2,7 @@ import { delimiter, resolve } from "node:path";
 import { describe, it, expect } from "vitest";
 import {
   builderArgsForTarget,
+  deriveVersionFromEnvOrGit,
   envWithLocalBins,
   normalizeGitVersion,
   parsePackageArgs,
@@ -45,6 +46,29 @@ describe("normalizeGitVersion", () => {
     // when there are no tags in the history at all.
     expect(normalizeGitVersion("f1415e96")).toBe("0.0.0-f1415e96");
     expect(normalizeGitVersion("abc1234")).toBe("0.0.0-abc1234");
+  });
+});
+
+describe("deriveVersionFromEnvOrGit", () => {
+  it("uses the pushed GitHub tag as the Desktop version", () => {
+    expect(
+      deriveVersionFromEnvOrGit({
+        env: {
+          GITHUB_REF_TYPE: "tag",
+          GITHUB_REF_NAME: "v0.1.28",
+        },
+        describe: () => "v0.1.27-1397-g7849ff32-1-g1d46d0b5",
+      }),
+    ).toBe("0.1.28");
+  });
+
+  it("falls back to git describe outside tag pushes", () => {
+    expect(
+      deriveVersionFromEnvOrGit({
+        env: { GITHUB_REF_TYPE: "branch", GITHUB_REF_NAME: "main" },
+        describe: () => "v0.1.27-1397-g7849ff32-1-g1d46d0b5",
+      }),
+    ).toBe("0.1.27-1397-g7849ff32-1-g1d46d0b5");
   });
 });
 

@@ -112,8 +112,14 @@ export function normalizeGitVersion(raw) {
   return stripped;
 }
 
-function deriveVersion() {
-  return normalizeGitVersion(sh("git describe --tags --always --dirty"));
+export function deriveVersionFromEnvOrGit({
+  env = process.env,
+  describe = () => sh("git describe --tags --always --dirty"),
+} = {}) {
+  if (env.GITHUB_REF_TYPE === "tag" && env.GITHUB_REF_NAME) {
+    return normalizeGitVersion(env.GITHUB_REF_NAME);
+  }
+  return normalizeGitVersion(describe());
 }
 
 function uniqueOrdered(values) {
@@ -428,7 +434,7 @@ function main() {
   }
 
   // Step 2: derive the version that should be written into the app.
-  const version = deriveVersion();
+  const version = deriveVersionFromEnvOrGit();
   if (version) {
     console.log(`[package] Desktop version → ${version} (from git describe)`);
   } else {
