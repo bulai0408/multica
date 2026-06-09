@@ -3,6 +3,7 @@ import {
   DEFAULT_RUNTIME_CONFIG,
   deriveWsUrl,
   parseRuntimeConfig,
+  runtimeConfigFromBuildEnv,
   runtimeConfigFromDevEnv,
 } from "./runtime-config";
 
@@ -147,5 +148,39 @@ describe("runtime config", () => {
       wsUrl: "wss://api.test.multica.ai/ws",
       appUrl: "https://staging.multica.ai",
     });
+  });
+
+  it("uses build-time VITE_API_URL as packaged default runtime config", () => {
+    expect(
+      runtimeConfigFromBuildEnv({
+        apiUrl: "https://multica.kami.fit:444/",
+        wsUrl: "wss://multica.kami.fit:444/ws/",
+        appUrl: "https://multica.kami.fit:444/",
+      }),
+    ).toEqual({
+      schemaVersion: 1,
+      apiUrl: "https://multica.kami.fit:444",
+      wsUrl: "wss://multica.kami.fit:444/ws",
+      appUrl: "https://multica.kami.fit:444",
+    });
+  });
+
+  it("derives build-time wsUrl and appUrl from apiUrl", () => {
+    expect(runtimeConfigFromBuildEnv({ apiUrl: "https://selfhost.example.com" })).toEqual({
+      schemaVersion: 1,
+      apiUrl: "https://selfhost.example.com",
+      wsUrl: "wss://selfhost.example.com/ws",
+      appUrl: "https://selfhost.example.com",
+    });
+  });
+
+  it("falls back to cloud defaults when no build-time runtime config is set", () => {
+    expect(runtimeConfigFromBuildEnv({})).toEqual(DEFAULT_RUNTIME_CONFIG);
+  });
+
+  it("requires build-time VITE_API_URL when other runtime URLs are set", () => {
+    expect(() => runtimeConfigFromBuildEnv({ wsUrl: "wss://multica.kami.fit/ws" })).toThrow(
+      /VITE_API_URL/,
+    );
   });
 });
