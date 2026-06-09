@@ -71,6 +71,9 @@ jobs:
           set -euo pipefail
 
           raw_version="$(git describe --tags --always --dirty)"
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            raw_version="${GITHUB_REF_NAME}"
+          fi
           version="${raw_version#v}"
           if [[ ! "${version}" =~ ^[0-9] ]]; then
             version="0.0.0-${version}"
@@ -99,11 +102,16 @@ jobs:
           fi
 
           if ! gh release view "${release_tag}" >/dev/null 2>&1; then
-            gh release create "${release_tag}" \
+            create_args=(
+              "${release_tag}"
               --target "${source_sha}" \
               --title "${release_title}" \
-              --notes "${release_notes}" \
-              "${create_flags[@]}"
+              --notes "${release_notes}"
+            )
+            if ((${#create_flags[@]})); then
+              create_args+=("${create_flags[@]}")
+            fi
+            gh release create "${create_args[@]}"
           else
             gh release edit "${release_tag}" \
               --target "${source_sha}" \
