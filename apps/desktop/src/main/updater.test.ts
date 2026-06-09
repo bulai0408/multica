@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BrowserWindow, WebContents } from "electron";
 
-type Handler = (...args: unknown[]) => void;
+type Handler = (...args: unknown[]) => unknown;
 
 const ctx = vi.hoisted(() => ({
   handlers: new Map<string, Handler[]>(),
@@ -166,5 +166,29 @@ describe("setupAutoUpdater", () => {
     expect(() => emitUpdater("download-progress", { percent: 42 })).toThrow(
       "boom",
     );
+  });
+
+  it("returns success after requesting update installation", () => {
+    setupAutoUpdater(() => null);
+
+    const installHandler = ctx.ipcHandle.mock.calls.find(
+      ([channel]) => channel === "updater:install",
+    )?.[1] as Handler | undefined;
+
+    expect(installHandler?.()).toEqual({ ok: true });
+    expect(ctx.quitAndInstall).toHaveBeenCalledWith(false, true);
+  });
+
+  it("returns an install error when quitAndInstall throws", () => {
+    ctx.quitAndInstall.mockImplementationOnce(() => {
+      throw new Error("Squirrel failed");
+    });
+    setupAutoUpdater(() => null);
+
+    const installHandler = ctx.ipcHandle.mock.calls.find(
+      ([channel]) => channel === "updater:install",
+    )?.[1] as Handler | undefined;
+
+    expect(installHandler?.()).toEqual({ ok: false, error: "Squirrel failed" });
   });
 });

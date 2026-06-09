@@ -64,6 +64,29 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Validate macOS signing secrets
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          missing=()
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              missing+=("${name}")
+            fi
+          done
+
+          if ((${#missing[@]})); then
+            echo "::error::Self-host macOS updater releases must be Developer ID signed and notarized so Squirrel.Mac can install downloaded updates. Configure these repository secrets before publishing: ${missing[*]}"
+            exit 1
+          fi
+
       - name: Prepare GitHub Release
         id: release
         env:
@@ -158,7 +181,6 @@ jobs:
           VITE_API_URL: ${{ vars.SELFHOST_DESKTOP_API_URL || secrets.SELFHOST_DESKTOP_API_URL || vars.VITE_API_URL || secrets.VITE_API_URL || '' }}
           VITE_WS_URL: ${{ vars.SELFHOST_DESKTOP_WS_URL || secrets.SELFHOST_DESKTOP_WS_URL || vars.VITE_WS_URL || secrets.VITE_WS_URL || '' }}
           VITE_APP_URL: ${{ vars.SELFHOST_DESKTOP_APP_URL || secrets.SELFHOST_DESKTOP_APP_URL || vars.VITE_APP_URL || secrets.VITE_APP_URL || '' }}
-          CSC_IDENTITY_AUTO_DISCOVERY: ${{ vars.CSC_IDENTITY_AUTO_DISCOVERY || 'false' }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -181,12 +203,6 @@ jobs:
             echo "[package] Desktop runtime app → ${VITE_APP_URL}"
           fi
 
-          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
-            if [[ -z "${!name:-}" ]]; then
-              unset "${name}"
-            fi
-          done
-
           node scripts/package.mjs --mac "--${SELFHOST_DESKTOP_ARCH}" --publish always
 
       - name: Verify updater release assets
@@ -194,23 +210,37 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
           VERSION: ${{ steps.release.outputs.version }}
+          SELFHOST_DESKTOP_ARCH: ${{ env.SELFHOST_DESKTOP_ARCH }}
         shell: bash
         run: |
           set -euo pipefail
 
           asset_names="$(gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name')"
           echo "${asset_names}"
+          zip_name="multica-desktop-${VERSION}-mac-${SELFHOST_DESKTOP_ARCH}.zip"
           grep -Fx "latest-mac.yml" <<<"${asset_names}" >/dev/null
           grep -E '\.dmg$' <<<"${asset_names}" >/dev/null
-          grep -E '\.zip$' <<<"${asset_names}" >/dev/null
+          grep -Fx "${zip_name}" <<<"${asset_names}" >/dev/null
           grep -E '\.blockmap$' <<<"${asset_names}" >/dev/null
 
           tmp_dir="$(mktemp -d)"
           gh release download "${RELEASE_TAG}" \
             --pattern latest-mac.yml \
+            --pattern "${zip_name}" \
             --dir "${tmp_dir}" \
             --clobber
           grep -Fx "version: ${VERSION}" "${tmp_dir}/latest-mac.yml" >/dev/null
+
+          ditto -x -k "${tmp_dir}/${zip_name}" "${tmp_dir}/app"
+          app_path="${tmp_dir}/app/Multica.app"
+          test -d "${app_path}"
+          codesign --verify --deep --strict --verbose=2 "${app_path}"
+          team_id="$(codesign -dv --verbose=4 "${app_path}" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
+          if [[ -z "${team_id}" || "${team_id}" == "not set" ]]; then
+            echo "::error::${zip_name} is not Developer ID signed; TeamIdentifier=${team_id:-missing}"
+            exit 1
+          fi
+          spctl -a -vv --type execute "${app_path}"
 
       - name: Publish verified GitHub Release
         env:

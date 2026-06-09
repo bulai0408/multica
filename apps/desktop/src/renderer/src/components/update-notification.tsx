@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { RefreshCw, X } from "lucide-react";
+import { AlertCircle, RefreshCw, X } from "lucide-react";
 
 // Downloads run silently in the background (main process has
 // autoDownload=true). The renderer only renders UI once the package is fully
@@ -11,14 +11,42 @@ type UpdateState =
 export function UpdateNotification() {
   const [state, setState] = useState<UpdateState>({ status: "idle" });
   const [dismissed, setDismissed] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [installError, setInstallError] = useState<string | null>(null);
 
   useEffect(() => {
     const cleanup = window.updater.onUpdateDownloaded((info) => {
       setState({ status: "ready", version: info.version });
       setDismissed(false);
+      setInstalling(false);
+      setInstallError(null);
     });
     return cleanup;
   }, []);
+
+  useEffect(() => {
+    return window.updater.onUpdateError((info) => {
+      setInstallError(info.error);
+      setInstalling(false);
+      setDismissed(false);
+    });
+  }, []);
+
+  async function installUpdate() {
+    setInstalling(true);
+    setInstallError(null);
+
+    try {
+      const result = await window.updater.installUpdate();
+      if (!result.ok) {
+        setInstallError(result.error);
+        setInstalling(false);
+      }
+    } catch (err) {
+      setInstallError(err instanceof Error ? err.message : String(err));
+      setInstalling(false);
+    }
+  }
 
   if (state.status === "idle") return null;
   if (dismissed) return null;
@@ -42,20 +70,28 @@ export function UpdateNotification() {
           <p className="text-xs text-muted-foreground mt-0.5">
             v{state.version} will be applied on next launch.
           </p>
+          {installError && (
+            <p className="mt-2 flex items-start gap-1.5 text-xs text-destructive">
+              <AlertCircle className="mt-0.5 size-3 shrink-0" />
+              <span>{installError}</span>
+            </p>
+          )}
           <div className="mt-2 flex items-center gap-1.5">
             <button
               type="button"
               onClick={() => setDismissed(true)}
+              disabled={installing}
               className="inline-flex items-center rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent transition-colors"
             >
               Later
             </button>
             <button
               type="button"
-              onClick={() => window.updater.installUpdate()}
-              className="inline-flex items-center rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+              onClick={installUpdate}
+              disabled={installing}
+              className="inline-flex items-center rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60 transition-colors"
             >
-              Restart now
+              {installing ? "Restarting..." : "Restart now"}
             </button>
           </div>
         </div>
