@@ -90,6 +90,10 @@ win:
   artifactName: multica-desktop-${version}-windows-${arch}.${ext}
 publish:
   provider: github
+  # Upstream default. Fork/self-host builds are overridden by
+  # apps/desktop/scripts/package.mjs via MULTICA_DESKTOP_UPDATE_*,
+  # GITHUB_REPOSITORY, or remote.origin.url so packaged clients check the
+  # repository that published their release assets.
   owner: multica-ai
   repo: multica
   # Align with our CLI release flow which pre-creates a *published* GitHub

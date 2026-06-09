@@ -1,0 +1,167 @@
+name: Self-host macOS Updater
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref or tag to build; leave empty to build the workflow ref"
+        required: false
+        default: ""
+      arch:
+        description: "macOS architecture to publish update metadata for"
+        required: true
+        type: choice
+        options:
+          - arm64
+          - x64
+        default: arm64
+  push:
+    tags:
+      - "v*.*.*"
+      - "!v*-dirty*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: selfhost-macos-updater-${{ github.ref }}-${{ github.event.inputs.arch || 'arm64' }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Publish macOS update assets
+    # Fork/self-host builds own their own GitHub release feed. The canonical
+    # upstream still uses its separate Desktop release path for signed and
+    # notarized macOS builds.
+    if: github.repository_owner != 'multica-ai'
+    runs-on: macos-latest
+    env:
+      SELFHOST_DESKTOP_ARCH: ${{ github.event.inputs.arch || 'arm64' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare published GitHub Release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          raw_version="$(git describe --tags --always --dirty)"
+          version="${raw_version#v}"
+          if [[ ! "${version}" =~ ^[0-9] ]]; then
+            version="0.0.0-${version}"
+          fi
+          if [[ "${version}" == *dirty* ]]; then
+            echo "::error::Refusing to publish update assets from a dirty worktree version: ${version}"
+            exit 1
+          fi
+
+          release_tag="v${version}"
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            release_tag="${GITHUB_REF_NAME}"
+          fi
+
+          source_sha="$(git rev-parse HEAD)"
+          release_title="${release_tag}"
+          release_notes="Self-host macOS Desktop updater assets for ${release_tag} (${source_sha})."
+
+          create_flags=()
+          edit_flags=(--draft=false)
+          if [[ "${version}" == *-* ]]; then
+            create_flags+=(--prerelease --latest=false)
+            edit_flags+=(--prerelease --latest=false)
+          else
+            edit_flags+=(--prerelease=false)
+          fi
+
+          if ! gh release view "${release_tag}" >/dev/null 2>&1; then
+            gh release create "${release_tag}" \
+              --target "${source_sha}" \
+              --title "${release_title}" \
+              --notes "${release_notes}" \
+              "${create_flags[@]}"
+          else
+            gh release edit "${release_tag}" \
+              --target "${source_sha}" \
+              --title "${release_title}" \
+              --notes "${release_notes}" \
+              "${edit_flags[@]}"
+          fi
+
+          echo "tag=${release_tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Package and publish macOS update assets
+        working-directory: apps/desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # electron-builder's GitHub publisher reads GITHUB_TOKEN.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The built app's app-update.yml must point to this fork, not the
+          # upstream multica-ai/multica feed.
+          MULTICA_DESKTOP_UPDATE_REPOSITORY: ${{ github.repository }}
+          VITE_API_URL: ${{ vars.SELFHOST_DESKTOP_API_URL || secrets.SELFHOST_DESKTOP_API_URL || vars.VITE_API_URL || secrets.VITE_API_URL || '' }}
+          VITE_WS_URL: ${{ vars.SELFHOST_DESKTOP_WS_URL || secrets.SELFHOST_DESKTOP_WS_URL || vars.VITE_WS_URL || secrets.VITE_WS_URL || '' }}
+          VITE_APP_URL: ${{ vars.SELFHOST_DESKTOP_APP_URL || secrets.SELFHOST_DESKTOP_APP_URL || vars.VITE_APP_URL || secrets.VITE_APP_URL || '' }}
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ vars.CSC_IDENTITY_AUTO_DISCOVERY || 'false' }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              unset "${name}"
+            fi
+          done
+
+          node scripts/package.mjs --mac "--${SELFHOST_DESKTOP_ARCH}" --publish always
+
+      - name: Verify updater release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          is_draft="$(gh release view "${RELEASE_TAG}" --json isDraft --jq '.isDraft')"
+          if [[ "${is_draft}" != "false" ]]; then
+            echo "::error::${RELEASE_TAG} is still a draft; electron-updater cannot see draft releases"
+            exit 1
+          fi
+
+          asset_names="$(gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name')"
+          echo "${asset_names}"
+          grep -Fx "latest-mac.yml" <<<"${asset_names}" >/dev/null
+          grep -E '\.dmg$' <<<"${asset_names}" >/dev/null
+          grep -E '\.zip$' <<<"${asset_names}" >/dev/null
+          grep -E '\.blockmap$' <<<"${asset_names}" >/dev/null

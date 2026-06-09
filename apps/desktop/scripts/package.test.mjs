@@ -5,6 +5,8 @@ import {
   envWithLocalBins,
   normalizeGitVersion,
   parsePackageArgs,
+  parseGitHubRepository,
+  resolveDesktopUpdateRepository,
   resolveBuildMatrix,
   stripLeadingSeparator,
 } from "./package.mjs";
@@ -159,6 +161,33 @@ describe("resolveBuildMatrix", () => {
 });
 
 describe("builderArgsForTarget", () => {
+  it("overrides the electron-updater GitHub feed for fork builds", () => {
+    expect(
+      builderArgsForTarget(
+        { platform: "mac", arch: "arm64" },
+        {
+          allPlatforms: false,
+          sharedArgs: ["--publish", "always"],
+          platformTargets: { mac: [], win: [], linux: [] },
+          requestedPlatforms: ["mac"],
+          requestedArchs: ["arm64"],
+        },
+        "1.2.3",
+        {
+          updateRepository: { owner: "bulai0408", repo: "multica" },
+        },
+      ),
+    ).toEqual([
+      "-c.extraMetadata.version=1.2.3",
+      "--mac",
+      "--arm64",
+      "--publish",
+      "always",
+      "-c.publish.owner=bulai0408",
+      "-c.publish.repo=multica",
+    ]);
+  });
+
   it("adds scoped output directories for multi-target builds", () => {
     expect(
       builderArgsForTarget(
@@ -237,6 +266,74 @@ describe("builderArgsForTarget", () => {
       "--publish",
       "never",
     ]);
+  });
+});
+
+describe("parseGitHubRepository", () => {
+  it("parses owner/repo shorthand", () => {
+    expect(parseGitHubRepository("bulai0408/multica")).toEqual({
+      owner: "bulai0408",
+      repo: "multica",
+    });
+  });
+
+  it("parses HTTPS and SSH GitHub remotes", () => {
+    expect(parseGitHubRepository("https://github.com/bulai0408/multica.git")).toEqual({
+      owner: "bulai0408",
+      repo: "multica",
+    });
+    expect(parseGitHubRepository("git@github.com:bulai0408/multica.git")).toEqual({
+      owner: "bulai0408",
+      repo: "multica",
+    });
+  });
+
+  it("ignores non-GitHub repository values", () => {
+    expect(parseGitHubRepository("https://gitlab.example.com/bulai0408/multica.git")).toBe(
+      null,
+    );
+  });
+});
+
+describe("resolveDesktopUpdateRepository", () => {
+  it("prefers explicit owner/repo environment variables", () => {
+    expect(
+      resolveDesktopUpdateRepository({
+        env: {
+          GITHUB_REPOSITORY: "multica-ai/multica",
+          MULTICA_DESKTOP_UPDATE_OWNER: "bulai0408",
+          MULTICA_DESKTOP_UPDATE_REPO: "multica",
+        },
+        remoteUrl: "https://github.com/ignored/ignored.git",
+      }),
+    ).toEqual({ owner: "bulai0408", repo: "multica" });
+  });
+
+  it("uses GITHUB_REPOSITORY before the local git remote", () => {
+    expect(
+      resolveDesktopUpdateRepository({
+        env: { GITHUB_REPOSITORY: "bulai0408/multica" },
+        remoteUrl: "https://github.com/multica-ai/multica.git",
+      }),
+    ).toEqual({ owner: "bulai0408", repo: "multica" });
+  });
+
+  it("falls back to remote.origin.url for local fork builds", () => {
+    expect(
+      resolveDesktopUpdateRepository({
+        env: {},
+        remoteUrl: "git@github.com:bulai0408/multica.git",
+      }),
+    ).toEqual({ owner: "bulai0408", repo: "multica" });
+  });
+
+  it("requires explicit owner/repo overrides to be provided as a pair", () => {
+    expect(() =>
+      resolveDesktopUpdateRepository({
+        env: { MULTICA_DESKTOP_UPDATE_OWNER: "bulai0408" },
+        remoteUrl: "",
+      }),
+    ).toThrow(/MULTICA_DESKTOP_UPDATE_OWNER and MULTICA_DESKTOP_UPDATE_REPO/);
   });
 });
 
