@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 // Wrapper around `electron-builder` that keeps the Desktop version in
-// lockstep with the CLI. Both are derived from `git describe --tags
-// --always --dirty` — the same source GoReleaser reads for the CLI
-// binary via the `main.version` ldflag — so a single `vX.Y.Z` tag push
-// produces matching CLI and Desktop versions.
+// lockstep with the CLI. By default both are derived from `git describe
+// --tags --always --dirty` — the same source GoReleaser reads for the
+// CLI binary via the `main.version` ldflag — so a single `vX.Y.Z` tag
+// push produces matching CLI and Desktop versions. CI may also provide
+// `MULTICA_DESKTOP_VERSION` when it has already reserved the updater
+// release version before packaging.
 //
 // Builds the Electron bundles once, then for each requested target
 // (platform + arch) compiles the matching Go CLI into resources/bin/ and
@@ -116,6 +118,9 @@ export function deriveVersionFromEnvOrGit({
   env = process.env,
   describe = () => sh("git describe --tags --always --dirty"),
 } = {}) {
+  if (env.MULTICA_DESKTOP_VERSION) {
+    return normalizeGitVersion(env.MULTICA_DESKTOP_VERSION);
+  }
   if (env.GITHUB_REF_TYPE === "tag" && env.GITHUB_REF_NAME) {
     return normalizeGitVersion(env.GITHUB_REF_NAME);
   }
@@ -436,7 +441,7 @@ function main() {
   // Step 2: derive the version that should be written into the app.
   const version = deriveVersionFromEnvOrGit();
   if (version) {
-    console.log(`[package] Desktop version → ${version} (from git describe)`);
+    console.log(`[package] Desktop version → ${version}`);
   } else {
     console.warn(
       "[package] could not derive version from git; falling back to package.json",

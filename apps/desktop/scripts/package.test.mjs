@@ -50,6 +50,19 @@ describe("normalizeGitVersion", () => {
 });
 
 describe("deriveVersionFromEnvOrGit", () => {
+  it("uses the explicit Desktop version before GitHub tags or git describe", () => {
+    expect(
+      deriveVersionFromEnvOrGit({
+        env: {
+          MULTICA_DESKTOP_VERSION: "0.1.29",
+          GITHUB_REF_TYPE: "tag",
+          GITHUB_REF_NAME: "v0.1.28",
+        },
+        describe: () => "v0.1.27-1397-g7849ff32-1-g1d46d0b5",
+      }),
+    ).toBe("0.1.29");
+  });
+
   it("uses the pushed GitHub tag as the Desktop version", () => {
     expect(
       deriveVersionFromEnvOrGit({

@@ -96,10 +96,10 @@ publish:
   # repository that published their release assets.
   owner: multica-ai
   repo: multica
-  # Align with our CLI release flow which pre-creates a *published* GitHub
-  # Release via `gh release create`. The electron-builder default of
-  # `releaseType: draft` conflicts with `existingType=release` and causes
-  # uploads of the DMG/ZIP/blockmaps/latest-mac.yml to be silently skipped,
-  # which breaks electron-updater auto-update on installed clients.
+  # Align with our release flow which prepares the GitHub Release before
+  # packaging. The electron-builder default of `releaseType: draft` conflicts
+  # with existing published releases and causes uploads of the
+  # DMG/ZIP/blockmaps/latest-mac.yml to be silently skipped; `release` still
+  # uploads to the fresh draft release that CI creates before publishing it.
   releaseType: release
 npmRebuild: false
