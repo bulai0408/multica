@@ -169,6 +169,13 @@ services:
 
   frontend:
     image: ${MULTICA_WEB_IMAGE:-ghcr.io/multica-ai/multica-web}:${MULTICA_IMAGE_TAG:-latest}
+    labels:
+      watchcow.enable: "true"
+      watchcow.display_name: "multica"
+      watchcow.desc: "Multica"
+      watchcow.service_port: "3000"
+      watchcow.protocol: "http"
+      watchcow.icon: "file://./icons/multica.png"
     depends_on:
       - backend
     ports:
