@@ -29,10 +29,17 @@ export type ManualUpdateCheckResult =
     }
   | { ok: false; error: string };
 
+export type InstallUpdateResult = { ok: true } | { ok: false; error: string };
+
 type RendererChannel =
   | "updater:update-available"
   | "updater:download-progress"
-  | "updater:update-downloaded";
+  | "updater:update-downloaded"
+  | "updater:error";
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
 
 function isDestroyedObjectError(err: unknown): boolean {
   return err instanceof Error && err.message.includes("Object has been destroyed");
@@ -109,6 +116,9 @@ export function setupAutoUpdater(getMainWindow: () => BrowserWindow | null): voi
 
   autoUpdater.on("error", (err) => {
     console.error("Auto-updater error:", err);
+    sendToLiveRenderer(getMainWindow(), "updater:error", {
+      error: errorMessage(err),
+    });
   });
 
   // Retained for IPC back-compat with older renderer bundles. With
@@ -117,8 +127,14 @@ export function setupAutoUpdater(getMainWindow: () => BrowserWindow | null): voi
     return autoUpdater.downloadUpdate();
   });
 
-  ipcMain.handle("updater:install", () => {
-    autoUpdater.quitAndInstall(false, true);
+  ipcMain.handle("updater:install", (): InstallUpdateResult => {
+    try {
+      autoUpdater.quitAndInstall(false, true);
+      return { ok: true };
+    } catch (err) {
+      console.error("Failed to install update:", err);
+      return { ok: false, error: errorMessage(err) };
+    }
   });
 
   ipcMain.handle("updater:check", async (): Promise<ManualUpdateCheckResult> => {

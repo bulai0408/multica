@@ -255,6 +255,11 @@ const updaterAPI = {
     ipcRenderer.on("updater:update-downloaded", handler);
     return () => ipcRenderer.removeListener("updater:update-downloaded", handler);
   },
+  onUpdateError: (callback: (info: { error: string }) => void) => {
+    const handler = (_: unknown, info: { error: string }) => callback(info);
+    ipcRenderer.on("updater:error", handler);
+    return () => ipcRenderer.removeListener("updater:error", handler);
+  },
   downloadUpdate: () => ipcRenderer.invoke("updater:download"),
   installUpdate: () => ipcRenderer.invoke("updater:install"),
   checkForUpdates: (): Promise<
