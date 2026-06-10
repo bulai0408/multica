@@ -1,11 +1,9 @@
 import { useEffect, useState } from "react";
-import { AlertCircle, RefreshCw, X } from "lucide-react";
+import { AlertCircle, Download, RefreshCw, X } from "lucide-react";
 
-// Downloads run silently in the background (main process has
-// autoDownload=true). The renderer only renders UI once the package is fully
-// downloaded and waiting for a restart.
 type UpdateState =
   | { status: "idle" }
+  | { status: "available"; version: string; releaseUrl: string }
   | { status: "ready"; version: string };
 
 export function UpdateNotification() {
@@ -15,13 +13,27 @@ export function UpdateNotification() {
   const [installError, setInstallError] = useState<string | null>(null);
 
   useEffect(() => {
-    const cleanup = window.updater.onUpdateDownloaded((info) => {
+    const cleanupAvailable = window.updater.onUpdateAvailable((info) => {
+      if (!info.releaseUrl) return;
+      setState({
+        status: "available",
+        version: info.version,
+        releaseUrl: info.releaseUrl,
+      });
+      setDismissed(false);
+      setInstalling(false);
+      setInstallError(null);
+    });
+    const cleanupDownloaded = window.updater.onUpdateDownloaded((info) => {
       setState({ status: "ready", version: info.version });
       setDismissed(false);
       setInstalling(false);
       setInstallError(null);
     });
-    return cleanup;
+    return () => {
+      cleanupAvailable();
+      cleanupDownloaded();
+    };
   }, []);
 
   useEffect(() => {
@@ -48,6 +60,20 @@ export function UpdateNotification() {
     }
   }
 
+  async function openDownloadPage() {
+    if (state.status !== "available") return;
+    setInstalling(true);
+    setInstallError(null);
+
+    try {
+      await window.desktopAPI.openExternal(state.releaseUrl);
+      setInstalling(false);
+    } catch (err) {
+      setInstallError(err instanceof Error ? err.message : String(err));
+      setInstalling(false);
+    }
+  }
+
   if (state.status === "idle") return null;
   if (dismissed) return null;
 
@@ -63,12 +89,20 @@ export function UpdateNotification() {
 
       <div className="flex items-start gap-3">
         <div className="mt-0.5 rounded-md bg-success/10 p-1.5">
-          <RefreshCw className="size-4 text-success" />
+          {state.status === "available" ? (
+            <Download className="size-4 text-success" />
+          ) : (
+            <RefreshCw className="size-4 text-success" />
+          )}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium">Update ready</p>
+          <p className="text-sm font-medium">
+            {state.status === "available" ? "Update available" : "Update ready"}
+          </p>
           <p className="text-xs text-muted-foreground mt-0.5">
-            v{state.version} will be applied on next launch.
+            {state.status === "available"
+              ? `v${state.version} is ready to download.`
+              : `v${state.version} will be applied on next launch.`}
           </p>
           {installError && (
             <p className="mt-2 flex items-start gap-1.5 text-xs text-destructive">
@@ -87,11 +121,19 @@ export function UpdateNotification() {
             </button>
             <button
               type="button"
-              onClick={installUpdate}
+              onClick={
+                state.status === "available" ? openDownloadPage : installUpdate
+              }
               disabled={installing}
               className="inline-flex items-center rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60 transition-colors"
             >
-              {installing ? "Restarting..." : "Restart now"}
+              {state.status === "available"
+                ? installing
+                  ? "Opening..."
+                  : "Download"
+                : installing
+                  ? "Restarting..."
+                  : "Restart now"}
             </button>
           </div>
         </div>

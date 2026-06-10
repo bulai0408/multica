@@ -330,6 +330,8 @@
       "check_section_description": "立即检查更新，而不是等待下一次自动轮询。可用的更新会在后台下载，就绪时弹出重启提示。",
       "up_to_date": "已是最新版本。",
       "downloading": "v{{version}} 正在后台下载——准备好安装时会通知你。",
+      "manual_available": "v{{version}} 可下载。打开下载页后手动安装。",
+      "open_download": "打开下载页",
       "check_now": "立即检查",
       "checking": "检查中..."
     }

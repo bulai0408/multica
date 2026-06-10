@@ -237,8 +237,17 @@ const daemonAPI = {
 };
 
 const updaterAPI = {
-  onUpdateAvailable: (callback: (info: { version: string; releaseNotes?: string }) => void) => {
-    const handler = (_: unknown, info: { version: string; releaseNotes?: string }) => callback(info);
+  onUpdateAvailable: (
+    callback: (info: {
+      version: string;
+      releaseNotes?: string;
+      releaseUrl?: string;
+    }) => void,
+  ) => {
+    const handler = (
+      _: unknown,
+      info: { version: string; releaseNotes?: string; releaseUrl?: string },
+    ) => callback(info);
     ipcRenderer.on("updater:update-available", handler);
     return () => ipcRenderer.removeListener("updater:update-available", handler);
   },
@@ -263,7 +272,14 @@ const updaterAPI = {
   downloadUpdate: () => ipcRenderer.invoke("updater:download"),
   installUpdate: () => ipcRenderer.invoke("updater:install"),
   checkForUpdates: (): Promise<
-    | { ok: true; currentVersion: string; latestVersion: string; available: boolean }
+    | {
+        ok: true;
+        currentVersion: string;
+        latestVersion: string;
+        available: boolean;
+        updateMode: "automatic" | "manual";
+        releaseUrl?: string;
+      }
     | { ok: false; error: string }
   > => ipcRenderer.invoke("updater:check"),
 };

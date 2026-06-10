@@ -330,6 +330,8 @@
       "check_section_description": "Trigger a check now instead of waiting for the next automatic poll. Available updates download in the background and show a restart prompt when ready.",
       "up_to_date": "You're on the latest version.",
       "downloading": "v{{version}} is downloading in the background — you'll be notified when it's ready to install.",
+      "manual_available": "v{{version}} is available. Open the download page to install it manually.",
+      "open_download": "Open download",
       "check_now": "Check now",
       "checking": "Checking…"
     }

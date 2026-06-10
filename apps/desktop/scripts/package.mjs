@@ -190,6 +190,15 @@ export function resolveDesktopUpdateRepository({
   return null;
 }
 
+export function resolveDesktopUpdateMode(env = process.env) {
+  const raw = String(env.MULTICA_DESKTOP_UPDATE_MODE ?? "").trim().toLowerCase();
+  if (!raw) return "automatic";
+  if (raw === "automatic" || raw === "manual") return raw;
+  throw new Error(
+    "[package] MULTICA_DESKTOP_UPDATE_MODE must be either automatic or manual",
+  );
+}
+
 export function envWithLocalBins(env = process.env, root = desktopRoot) {
   const pathKey =
     Object.keys(env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
@@ -343,11 +352,18 @@ export function builderArgsForTarget(
     disableMacNotarize = false,
     hostPlatform = process.platform,
     updateRepository = null,
+    updateMode = "automatic",
     useScopedOutputDir = false,
   } = {},
 ) {
   const builderArgs = [];
   if (version) builderArgs.push(`-c.extraMetadata.version=${version}`);
+  builderArgs.push(`-c.extraMetadata.multicaUpdateMode=${updateMode}`);
+  if (updateRepository) {
+    builderArgs.push(
+      `-c.extraMetadata.multicaUpdateRepository=${updateRepository.owner}/${updateRepository.repo}`,
+    );
+  }
   if (disableMacNotarize) builderArgs.push("-c.mac.notarize=false");
   builderArgs.push(PLATFORM_CONFIG[target.platform].builderFlag);
   const requestedTargets = parsed.platformTargets[target.platform];
@@ -398,6 +414,7 @@ function main() {
   const updateRepository = resolveDesktopUpdateRepository({
     remoteUrl: sh("git config --get remote.origin.url"),
   });
+  const updateMode = resolveDesktopUpdateMode();
   console.log(
     `[package] build matrix → ${buildMatrix.map(formatTarget).join(", ")}`,
   );
@@ -406,6 +423,7 @@ function main() {
       `[package] Desktop update feed → ${updateRepository.owner}/${updateRepository.repo}`,
     );
   }
+  console.log(`[package] Desktop update mode → ${updateMode}`);
 
   // Step 1: build the Electron main/preload/renderer bundles. Without
   // this step electron-builder silently packages whatever is already in
@@ -481,6 +499,7 @@ function main() {
       disableMacNotarize,
       hostPlatform: process.platform,
       updateRepository,
+      updateMode,
       useScopedOutputDir,
     });
 
