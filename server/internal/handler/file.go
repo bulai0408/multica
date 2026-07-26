@@ -571,7 +571,22 @@ func (h *Handler) GetAttachmentByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, h.attachmentToResponse(att))
+	resp := h.attachmentToResponse(att)
+	// Token-mode clients use this authenticated endpoint to replace the
+	// auth-gated API path with a URL that native media elements can load.
+	if h.CFSigner == nil && h.resolveAttachmentDownloadMode(att.Url) == attachmentDownloadModePresign {
+		if presigner, ok := h.Storage.(storage.Presigner); ok {
+			key := h.Storage.KeyFromURL(att.Url)
+			signedURL, err := presigner.PresignGet(r.Context(), key, h.attachmentDownloadURLTTL())
+			if err != nil {
+				slog.Warn("failed to presign inline attachment URL", "id", uuidToString(att.ID), "key", key, "error", err)
+			} else {
+				resp.DownloadURL = signedURL
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) loadAttachmentForRequest(w http.ResponseWriter, r *http.Request) (db.Attachment, bool) {
