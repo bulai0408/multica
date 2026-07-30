@@ -4,8 +4,11 @@ MAIN_ENV_FILE ?= .env
 WORKTREE_ENV_FILE ?= .env.worktree
 ENV_FILE ?= $(if $(wildcard $(MAIN_ENV_FILE)),$(MAIN_ENV_FILE),$(if $(wildcard $(WORKTREE_ENV_FILE)),$(WORKTREE_ENV_FILE),$(MAIN_ENV_FILE)))
 
+# Docker Compose parses .env itself; multiline dotenv values are not valid Make syntax.
+ifeq ($(filter selfhost selfhost-build selfhost-stop,$(MAKECMDGOALS)),)
 ifneq ($(wildcard $(ENV_FILE)),)
 include $(ENV_FILE)
+endif
 endif
 
 POSTGRES_DB ?= multica
