@@ -3,9 +3,10 @@
 MAIN_ENV_FILE ?= .env
 WORKTREE_ENV_FILE ?= .env.worktree
 ENV_FILE ?= $(if $(wildcard $(MAIN_ENV_FILE)),$(MAIN_ENV_FILE),$(if $(wildcard $(WORKTREE_ENV_FILE)),$(WORKTREE_ENV_FILE),$(MAIN_ENV_FILE)))
+SELFHOST_GOALS := selfhost selfhost-build selfhost-stop
 
 # Docker Compose parses .env itself; multiline dotenv values are not valid Make syntax.
-ifeq ($(filter selfhost selfhost-build selfhost-stop,$(MAKECMDGOALS)),)
+ifeq ($(filter $(SELFHOST_GOALS),$(MAKECMDGOALS)),)
 ifneq ($(wildcard $(ENV_FILE)),)
 include $(ENV_FILE)
 endif
@@ -26,7 +27,9 @@ GOOGLE_REDIRECT_URI ?= $(FRONTEND_ORIGIN)/auth/callback
 MULTICA_SERVER_URL ?= ws://localhost:$(PORT)/ws
 LOCAL_UPLOAD_BASE_URL ?= http://localhost:$(PORT)
 
+ifeq ($(filter $(SELFHOST_GOALS),$(MAKECMDGOALS)),)
 export
+endif
 
 MULTICA_ARGS ?= $(ARGS)
 
