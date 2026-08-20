@@ -25,7 +25,7 @@ Multica 是一个开源的团队工作区。你像给同事派活一样，把任
 </div>
 
 <p align="center">
-  <img src="docs/assets/hero-board.png" alt="Multica 看板：六个智能体和它们的人类队友一起推进工作" width="100%">
+  <img src="apps/docs/public/images/docs/workspace-overview.webp" alt="Multica 看板：六个智能体和它们的人类队友一起推进工作" width="100%">
 </p>
 
 <p align="center">
@@ -154,6 +154,7 @@ Multica 不自带模型。它驱动的是你本来就装好、登录好的那些
 | Qoder CLI | `qodercli` | Qoder CN | `qoderclicn` |
 | Qwen Code | `qwen` | QwenPaw | `qwenpaw` |
 | Reasonix | `reasonix` | Trae CLI | `traecli` |
+| DeepSeek Harness | `dsh` | Oh-My-Pi | `omp` |
 
 怎么装、怎么登录：[安装智能体运行时](https://multica.ai/docs/install-agent-runtime) ·
 [AI 编程工具对照](https://multica.ai/docs/providers)
@@ -212,7 +213,7 @@ Multica 不自带模型。它驱动的是你本来就装好、登录好的那些
 
 想参与贡献，先看[贡献指南](CONTRIBUTING.md)。
 
-**环境要求：**[Node.js](https://nodejs.org/) v20+、[pnpm](https://pnpm.io/) v10.28+、[Go](https://go.dev/) v1.26+、[Docker](https://www.docker.com/)
+**环境要求：**[Node.js](https://nodejs.org/) 22、[pnpm](https://pnpm.io/) 10.28.2、[Go](https://go.dev/) 1.26.6、[Docker](https://www.docker.com/)
 
 ```bash
 make dev

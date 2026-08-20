@@ -47,20 +47,6 @@ func backendResumeContinuityNotice(task Task) string {
 	return sessionContinuityNoticeFor(task)
 }
 
-// Turn-mode markers consumed by the runtime brief's mode router
-// (execenv.writeWorkflowIssue). The brief is byte-identical on every run and
-// therefore cannot say what triggered this turn; these lines do, and they are
-// emitted unconditionally from the same branches BuildPrompt uses to pick a
-// path, so the two can never disagree.
-//
-// Reply mode = respond to the triggering comment, do not touch issue status.
-// Ownership mode = an assignment/status change started this run; own the
-// status arc. Applying the wrong one silently changes issue status.
-const (
-	turnModeReply     = "**Turn mode: Reply.** Follow the Reply-mode block in your runtime workflow file for this turn; the Ownership-mode status steps do not apply.\n\n"
-	turnModeOwnership = "**Turn mode: Ownership.** Follow the Ownership-mode block in your runtime workflow file for this turn; the Reply-mode rules do not apply.\n\n"
-)
-
 // perTurnContextBlocks renders the run-scoped context blocks that used to live
 // in the runtime brief (CLAUDE.md / AGENTS.md).
 //
@@ -76,11 +62,46 @@ const (
 // Returns "" when none of the blocks apply.
 func perTurnContextBlocks(task Task) string {
 	var b strings.Builder
+	b.WriteString(buildActiveSiblingRunsBlock(task.IssueID, task.ActiveSiblingRuns))
 	if task.PriorSessionResumeUnavailable {
 		b.WriteString(sessionContinuityNoticeFor(task))
 	}
 	b.WriteString(execenv.BuildTaskInitiatorBlock(task.InitiatorType, task.InitiatorName, task.InitiatorEmail))
 	b.WriteString(execenv.BuildConnectedAppsBlock(task.ConnectedApps))
+	return b.String()
+}
+
+func buildActiveSiblingRunsBlock(currentIssueID string, runs []ActiveSiblingRunData) string {
+	// Sibling issue work is useful context only for another issue task. Chat,
+	// autopilot, and quick-create tasks have no current target issue whose claim
+	// history they could inspect, so rendering this block there creates an
+	// unactionable warning.
+	if currentIssueID == "" || len(runs) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("## Active sibling runs\n\n")
+	b.WriteString("This agent has other in-flight issue tasks. Before starting overlapping code or PR work, check this issue's comment history for a claim or handoff")
+	fmt.Fprintf(&b, " (`multica issue comment list %s --roots-only --summary --compact --output json`)", currentIssueID)
+	b.WriteString(" and inspect relevant siblings with the `run-messages` commands below — coordinate with existing work instead of opening a second PR. For writes that only record ownership or status of work already underway, use `--no-start` on `multica issue assign`/`update`/`status`.\n\n")
+	for _, run := range runs {
+		issueLabel := run.IssueIdentifier
+		if issueLabel == "" {
+			issueLabel = run.IssueID
+		}
+		fmt.Fprintf(&b, "- %s — task `%s`, status `%s`", issueLabel, run.TaskID, run.Status)
+		if run.StartedAt != "" {
+			fmt.Fprintf(&b, ", started %s", run.StartedAt)
+		} else if run.CreatedAt != "" {
+			fmt.Fprintf(&b, ", created %s", run.CreatedAt)
+		}
+		title := strings.TrimSpace(strings.NewReplacer("\r", " ", "\n", " ").Replace(run.IssueTitle))
+		if title != "" {
+			fmt.Fprintf(&b, ": %s", title)
+		}
+		fmt.Fprintf(&b, "; inspect: `multica issue run-messages %s`\n", run.TaskID)
+	}
+	b.WriteString("\n")
 	return b.String()
 }
 
@@ -121,7 +142,6 @@ func buildPromptBody(task Task, provider string) string {
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
-	b.WriteString(turnModeOwnership)
 	// Assignment handoff (MUL-3375): a free-text instruction the person who
 	// assigned/promoted this issue left for you. Frame it as a handoff, not a
 	// comment to reply to — there is no comment thread to answer here.
@@ -248,16 +268,11 @@ func buildCommentPrompt(task Task, provider string) string {
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
-	// Mode marker for the brief's router. Emitted unconditionally from the same
-	// branch that selects this code path, so the brief and the prompt can never
-	// disagree about which mode this turn is in. It must NOT be gated on
-	// TriggerCommentContent: an empty comment body (or an older server that
-	// doesn't send one) would otherwise leave the turn unlabelled, and the
-	// agent would fall through to Ownership mode and change the issue status.
-	b.WriteString(turnModeReply)
 	if task.TriggerCommentContent != "" {
 		authorLabel := "A user"
-		if task.TriggerAuthorType == "agent" {
+		if task.TriggerAuthorType == "system" {
+			authorLabel = "The platform"
+		} else if task.TriggerAuthorType == "agent" {
 			name := task.TriggerAuthorName
 			if name == "" {
 				name = "another agent"
@@ -278,7 +293,9 @@ func buildCommentPrompt(task Task, provider string) string {
 			fmt.Fprintf(&b, "This run also covers %d earlier comment(s) posted before it started — you must read and address them too, not just the one above. They may be in different threads, so each is reproduced here with its own thread:\n\n", len(task.CoalescedComments))
 			for _, cc := range task.CoalescedComments {
 				authorLabel := "A user"
-				if cc.AuthorType == "agent" {
+				if cc.AuthorType == "system" {
+					authorLabel = "The platform"
+				} else if cc.AuthorType == "agent" {
 					name := cc.AuthorName
 					if name == "" {
 						name = "another agent"

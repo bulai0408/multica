@@ -888,6 +888,15 @@ func TestReuseSkillRefreshIsCanonicalAcrossProviders(t *testing.T) {
 	}
 }
 
+func TestMcodeUsesNativeProjectSkillRoot(t *testing.T) {
+	t.Parallel()
+	workDir := t.TempDir()
+	want := filepath.Join(workDir, ".minimax", "skills")
+	if got := skillsDirPath(workDir, "mcode"); got != want {
+		t.Fatalf("skillsDirPath(mcode) = %q, want %q", got, want)
+	}
+}
+
 func TestCleanupPreservesLogs(t *testing.T) {
 	t.Parallel()
 	workspacesRoot := t.TempDir()
@@ -1080,10 +1089,12 @@ func TestInjectRuntimeConfigAvailableCommandsCoreOnly(t *testing.T) {
 		"multica issue comment list <issue-id>",
 		"multica issue create --title",
 		"multica issue update <id>",
+		"multica issue assign <id>",
+		"--no-start",
 		"--description-file <path>",
 		"--parent \"\"",
 		"multica repo checkout <url>",
-		"multica issue status <id> <status>",
+		"multica issue status <id> <status> [--no-start]",
 		"multica issue comment add <issue-id>",
 		"multica issue comment add --help",
 	} {
@@ -1132,7 +1143,6 @@ func TestInjectRuntimeConfigAvailableCommandsCoreOnly(t *testing.T) {
 		"multica autopilot delete",
 		"multica project get",
 		"multica project resource list",
-		"multica issue assign",
 		"multica issue label add",
 		"multica issue label remove",
 		"multica issue subscriber add",
@@ -4989,25 +4999,35 @@ func TestInjectRuntimeConfigMentionLoopHardening(t *testing.T) {
 	t.Run("mentions-section-lists-loop-protocol", func(t *testing.T) {
 		t.Parallel()
 		s := readClaudeMD(t, assignmentCtx)
+		// MUL-6417: the section is fact-anchored, no prescriptive default.
+		// Pin each fact that invalidates a false reason to mention — losing
+		// any one of them re-opens the incident class it closed.
 		for _, want := range []string{
 			"side-effecting actions",
 			"enqueues a new run for that agent",
-			// MUL-5442 judgment rewrite: the two H3 subsections merged into one
-			// paragraph — pin the policy anchors, not the retired headings.
-			"Default: NO mention",
-			// Each warranted-case scope qualifier pinned separately — "not yet
-			// involved" and "for the first time" ARE the anti-repeat-notify
-			// scope, not decoration (review catch on #6453).
-			"restarts an agent-to-agent loop and costs the user money",
-			"Mention only when escalating to a human owner",
-			"not yet involved",
-			"for the first time",
-			"explicitly asks to loop someone in",
-			"end with no mention at all",
+			// Notifying FOLLOWERS is a false need: delivery already happens.
+			// Scoped to followers on purpose — for a non-follower, a mention
+			// IS how they find out (Elon's review catch on #7245).
+			"followers of the issue already see your comment",
+			"completion notifications are platform-owned",
+			// The one real function, with its scope.
+			"pulls someone into work they are not doing yet",
+			// The courtesy-loop fact (the incident class behind #1581/#6453).
+			"whose only possible reply is another courtesy",
+			// The asymmetry that breaks ambiguous cases toward not mentioning.
+			"a missed mention costs one follow-up ask, a stray one costs a run",
 			"Silence ends conversations",
 		} {
 			if !strings.Contains(s, want) {
 				t.Errorf("Mentions section missing %q\n---\n%s", want, s)
+			}
+		}
+		// Neither the bare prescription (MUL-6417) nor the overreach that
+		// replaced it may come back: "never how someone finds out" was false
+		// for non-followers and suppressed legitimate human escalation.
+		for _, banned := range []string{"Default: NO mention", "never how someone finds out"} {
+			if strings.Contains(s, banned) {
+				t.Errorf("Mentions section carries retired wording %q\n---\n%s", banned, s)
 			}
 		}
 	})
@@ -5036,10 +5056,13 @@ func TestInjectRuntimeConfigMentionLoopHardening(t *testing.T) {
 		// back: "Decide whether a reply is warranted", "produced actual
 		// work", "pure acknowledgment / thanks / sign-off", "do NOT reply",
 		// "Silence is a valid and preferred way".
+		// MUL-6417 merged the reply-mode block into the shared steps: the
+		// unconditional one-comment contract now lives in step 4, and the
+		// mention-after-work bullet is gone with the block (the discipline
+		// itself stays in `## Mentions`, pinned by the Mentions subtest).
 		for _, want := range []string{
-			"Posting your reply as a comment is mandatory",
-			"Do any requested work first",
-			"Never @mention the agent you are replying to as a thank-you or sign-off",
+			"**Post your final results as a comment — this step is mandatory**",
+			"whose only possible reply is another courtesy",
 		} {
 			if !strings.Contains(s, want) {
 				t.Errorf("comment-triggered CLAUDE.md missing %q", want)
@@ -5092,24 +5115,23 @@ func TestInjectRuntimeConfigSquadLeaderCommentTriggeredNoAction(t *testing.T) {
 	}
 	s := string(data)
 
-	// The comment-triggered workflow must contain the squad leader no_action
-	// rule, and the reply imperative must carry the no_action carve-out so a
-	// later bullet never contradicts it (MUL-5442 #6493 review).
+	// The no_action rule lives on the leader variant of workflow step 4 since
+	// MUL-6417 (the reply-mode block that used to duplicate it is gone): the
+	// delivery imperative itself carries the carve-out, so no later bullet
+	// can contradict it (MUL-5442 #6493 review).
 	for _, want := range []string{
-		"Squad leader rule",
-		"DO NOT post any comment",
+		"unless your outcome is `no_action`",
 		"multica squad activity",
-		"Unless your outcome is `no_action` (Squad leader rule above), posting your reply as a comment is mandatory",
+		"DO NOT post a comment announcing no_action",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("squad leader comment-triggered CLAUDE.md missing %q", want)
 		}
 	}
-	// Capital-P form = the ordinary unconditional bullet; the leader brief
-	// must carry only the carve-out variant (its lowercase "posting your
-	// reply as a comment is mandatory" tail is expected and legal).
-	if strings.Contains(s, "Posting your reply as a comment is mandatory") {
-		t.Errorf("squad leader CLAUDE.md still carries the unconditional reply bullet")
+	// The unconditional ordinary-agent imperative must not coexist with the
+	// carve-out variant.
+	if strings.Contains(s, "**Post your final results as a comment — this step is mandatory**") {
+		t.Errorf("squad leader CLAUDE.md still carries the unconditional delivery step")
 	}
 
 	// The Output section must use strong prohibition language.
@@ -5132,8 +5154,8 @@ func TestInjectRuntimeConfigSquadLeaderCommentTriggeredNoAction(t *testing.T) {
 		t.Fatalf("read CLAUDE.md: %v", err)
 	}
 	s2 := string(data2)
-	if strings.Contains(s2, "Squad leader rule") {
-		t.Errorf("non-squad-leader CLAUDE.md should NOT contain squad leader rule")
+	if strings.Contains(s2, "unless your outcome is `no_action`") {
+		t.Errorf("non-squad-leader CLAUDE.md should NOT contain the leader no_action carve-out")
 	}
 }
 
@@ -5661,9 +5683,9 @@ func TestInjectRuntimeConfigCatchUpScansRootsFirst(t *testing.T) {
 
 // TestInjectRuntimeConfigIssueMetadataSectionScope locks in MUL-2017:
 // the `## Issue Metadata` section (semantic guide + recommended keys +
-// pin/clear rules) and the `metadata list` workflow step are emitted only
-// when the task carries a real issue id (comment-triggered or
-// assignment-triggered). Chat / quick-create / run-only autopilot don't
+// pin/clear rules) and the metadata-read guidance on the issue-get step
+// are emitted only when the task carries a real issue id (comment-triggered
+// or assignment-triggered). Chat / quick-create / run-only autopilot don't
 // have an issue, so injecting the section there would just guarantee a
 // failed CLI call on every entry. The discovery line in Available
 // Commands → Core is global and must appear everywhere so that the agent
@@ -5736,9 +5758,10 @@ func TestInjectRuntimeConfigIssueMetadataSectionScope(t *testing.T) {
 		// each entry must appear in the workflow numbered list to prove
 		// the metadata read step is wired in.
 		workflowStepPresent []string
-		// workflowAbsent is matched in non-issue contexts to guarantee
-		// no metadata-list step leaked into a workflow that has no
-		// issue id.
+		// workflowAbsent lists workflow substrings that must NOT appear:
+		// in non-issue contexts, any metadata-list step that leaked into
+		// a workflow with no issue id; in issue contexts, the standalone
+		// metadata-list read step retired by #7016.
 		workflowAbsent []string
 		want           wantSection
 	}{
@@ -5751,11 +5774,13 @@ func TestInjectRuntimeConfigIssueMetadataSectionScope(t *testing.T) {
 			provider: "claude",
 			filename: "CLAUDE.md",
 			workflowStepPresent: []string{
-				"Read the metadata bag (`multica issue metadata list`)",
-				// Platform failure semantics, not tool mechanics: a failed
-				// metadata read must never block the main task (MUL-5442
-				// stage-1 review).
-				"CLI failures are normal",
+				// #7016: the standalone `metadata list` read was folded
+				// into the issue-get step — `issue get` already returns
+				// the metadata bag, so the entry read costs zero extra
+				// calls. The old step's "CLI failures are normal"
+				// best-effort clause retired with it: when `issue get`
+				// itself fails, there is no bootstrap to unblock.
+				"its JSON already carries the issue's `metadata` bag",
 				// Both steps point at the section instead of restating its
 				// rules (MUL-5442); the entry step names what to look for,
 				// the exit step names the write bar.
@@ -5768,6 +5793,10 @@ func TestInjectRuntimeConfigIssueMetadataSectionScope(t *testing.T) {
 				"multica issue metadata delete",
 				"Before exiting",
 			},
+			workflowAbsent: []string{
+				// The redundant standalone read must not come back (#7016).
+				"Read the metadata bag (`multica issue metadata list`)",
+			},
 			want: withSection,
 		},
 		{
@@ -5776,12 +5805,15 @@ func TestInjectRuntimeConfigIssueMetadataSectionScope(t *testing.T) {
 			provider: "claude",
 			filename: "CLAUDE.md",
 			workflowStepPresent: []string{
-				"Read the metadata bag (`multica issue metadata list`)",
+				"its JSON already carries the issue's `metadata` bag",
 				"What to look for: `## Issue Metadata`",
 				"the bar in `## Issue Metadata`",
 				"multica issue metadata set",
 				"multica issue metadata delete",
 				"Before exiting",
+			},
+			workflowAbsent: []string{
+				"Read the metadata bag (`multica issue metadata list`)",
 			},
 			want: withSection,
 		},
@@ -5896,8 +5928,12 @@ func TestInjectRuntimeConfigIssueMetadataCodexFormattingUnchanged(t *testing.T) 
 		if !strings.Contains(s, "## Issue Metadata") {
 			t.Fatalf("Issue Metadata section missing\n---\n%s", s)
 		}
-		if !strings.Contains(s, "Read the metadata bag (`multica issue metadata list`)") {
-			t.Fatalf("metadata list step missing\n---\n%s", s)
+		if !strings.Contains(s, "its JSON already carries the issue's `metadata` bag") {
+			t.Fatalf("metadata-in-issue-get guidance missing\n---\n%s", s)
+		}
+		// The standalone read step retired by #7016 must not reappear.
+		if strings.Contains(s, "Read the metadata bag (`multica issue metadata list`)") {
+			t.Fatalf("redundant metadata list step present\n---\n%s", s)
 		}
 		// ...AND the post-#4182 file-first rule is still emitted on Linux.
 		if !strings.Contains(s, "always write the comment body to a UTF-8 file with your file-write tool first, then post it with `--content-file <path>`") {

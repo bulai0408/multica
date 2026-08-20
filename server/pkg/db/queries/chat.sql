@@ -332,6 +332,16 @@ SELECT id FROM chat_session
 WHERE id = $1
 FOR UPDATE;
 
+-- name: LockChatSessionForAppend :one
+-- The append transaction's first lock. FOR KEY SHARE conflicts with workspace
+-- or session deletion but remains compatible with normal non-key session
+-- updates and task enqueueing. DingTalk then acquires its route fence, matching
+-- the workspace teardown order chat_session -> dingtalk_group_route and
+-- preventing a route/session lock inversion.
+SELECT id FROM chat_session
+WHERE id = $1
+FOR KEY SHARE;
+
 -- name: LockChatSessionForRuntimeBind :one
 -- Acquires an exclusive (FOR UPDATE) row lock on chat_session(id), serialising
 -- "which runtime does this session execute on" against "enqueue the next task".
@@ -980,6 +990,11 @@ RETURNING *;
 -- replaying those sessions deterministically reproduces the same terminal
 -- state. Keep this list in sync with resumeUnsafeFailureReason and
 -- GetLastTaskSession.
+--
+-- The plan depends on idx_agent_task_queue_chat_terminal_resume for the
+-- terminal/cutoff scans and idx_agent_task_queue_chat_retired_session for the
+-- retired set. Keep their partial predicates broad enough for every CTE here,
+-- especially the NULL-session resume_overflow_at rows.
 --
 -- 'cancelled' is resumable and its absence was GH #6340: the user stops a turn
 -- the agent had already started answering, and the next message starts from
